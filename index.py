@@ -1,10 +1,17 @@
 import shapely.geometry
 
 import time_utils
-
+class QuadNode:
+    pass
 
 class GlobalQuad:
-    pass
+    def __init__(self,spatial_bound) -> None:
+        self.spatial_bound = spatial_bound
+        self.root = QuadNode(self.spatial_bound)
+        self.leaf_nodes = []
+    def build(samples,sample_rate,beta,k):
+        # comparator=Comparator
+        pass 
 
 
 class GlobalRTree:
