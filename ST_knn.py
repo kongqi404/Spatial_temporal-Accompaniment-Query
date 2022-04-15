@@ -4,7 +4,7 @@ import shapely.geometry
 from pyspark import StorageLevel, RDD
 
 import extractor
-from partition import GlobalSTInfo, do_statistic
+from partition import do_statistic
 from time_utils import expand_time_range, is_intersects
 
 

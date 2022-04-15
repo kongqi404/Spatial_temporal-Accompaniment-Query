@@ -1,77 +1,78 @@
-
+import heapq
 import math
-import queue
 
 import shapely.geometry
 
 import time_utils
 
+
 class GlobalNode:
     partition_id = -1
-    def set_partition_id(self,id):
-        self.partition_id = id
-    def get_partition_id(self,id):
+
+    def set_partition_id(self, _id):
+        self.partition_id = _id
+
+    def get_partition_id(self, _id):
         return self.partition_id
+
+
 class QuadNode(GlobalNode):
-    def __init__(self,env:shapely.geometry.Polygon) -> None:
-        self.center = env.centroid()
+    def __init__(self, env: shapely.geometry.Polygon) -> None:
+        self.centre = env.centroid
         self.sub_nodes = []
-    
-    
-    
-    def split(self,samples:list[shapely.geometry.Polygon],queue:queue.PriorityQueue)->None:
-        for index in range(0,4):
+
+    def split(self, samples: list[shapely.geometry.Polygon], samples_queue: list) -> None:
+        for index in range(0, 4):
             assert self.sub_nodes[index] is None
             self.sub_nodes[index] = QuadNode(self.create_sub_env(index))
             sub_env = self.sub_nodes[index].env
-            sub_samples = filter(lambda x:sub_env.intersects(x),samples)
-            queue.put(0,(self.sub_nodes[index],sub_samples))
-    
-    def find_nearest_id(self,point:shapely.geometry.Point,filter_)->int:
+            sub_samples = filter(lambda x: sub_env.intersects(x), samples)
+            heapq.heappush(samples_queue, (0, (self.sub_nodes[index], sub_samples)))
+
+    def find_nearest_id(self, point: shapely.geometry.Point, _filter) -> int:
         if self.partition_id != -1:
-            return self.partition_id if filter_(self) else -1
-        if point.getX > self.centre.getX:
-            if point.getY > self.centre.getY:
+            return self.partition_id if _filter(self) else -1
+        if point.x > self.centre.x:
+            if point.y > self.centre.y:
                 sub_index = 3
             else:
                 sub_index = 1
         else:
-            if point.getY > self.centre.getY:
+            if point.y > self.centre.y:
                 sub_index = 2
             else:
                 sub_index = 0
-        nearest_id = self.sub_nodes[sub_index].find_nearest_id(point,filter_)
+        nearest_id = self.sub_nodes[sub_index].find_nearest_id(point, _filter)
         if nearest_id == -1:
             for index in range(4):
                 if index != sub_index:
-                    nearest_id = self.sub_nodes[index].find_nearest_id(point,filter_)
-                    
-    
-    def create_sub_env(self,index):
+                    nearest_id = self.sub_nodes[index].find_nearest_id(point, _filter)
+
+    def create_sub_env(self, index):
         pass
-        
+
 
 class GlobalQuad:
-    def __init__(self,spatial_bound) -> None:
+    def __init__(self, spatial_bound) -> None:
         self.spatial_bound = spatial_bound
         self.root = QuadNode(self.spatial_bound)
         self.leaf_nodes = []
-    def build(self,samples,sample_rate,beta,k):
-        comparator=lambda x,y:0-(len(x[1])-len(y[1]))
-        max_num_per_partition = max(len(samples)//self.beta,math.ceil(4*self.sample_rate*k))
-        priority_queue = queue.PriorityQueue()
-        priority_queue.put((-len(samples),(self.root,samples)))
-        while len(priority_queue)<beta:
+
+    def build(self, samples, sample_rate, beta, k) -> None:
+        def comparator(x):
+            return -len(x)
+
+        max_num_per_partition = max(len(samples) // beta, math.ceil(4 * sample_rate * k))
+        priority_queue = []
+        heapq.heappush(priority_queue, (comparator(samples), (self.root, samples)))
+        # priority_queue.put((comparator(samples), (self.root, samples)))
+        while len(priority_queue) < beta:
             if len(priority_queue[0][1]) < max_num_per_partition:
                 self.leaf_nodes = [node[0] for node in priority_queue]
                 return
             else:
-                max_node,max_samples = priority_queue.get()
+                max_node, max_samples = priority_queue[0][1]
                 # max_node.split()
-    
-        
-    
-    
 
 
 class GlobalRTree:
@@ -217,6 +218,6 @@ class STIndex:
 
     def get_time_periods(self, query_range):
         start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))
-        end_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[1]), start_index)
+        end_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[1]),
+                                            start_index)
         return self.time_periods[start_index:end_index]
-        
