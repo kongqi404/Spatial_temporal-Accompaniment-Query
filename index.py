@@ -1,17 +1,77 @@
+
+import math
+import queue
+
 import shapely.geometry
 
 import time_utils
-class QuadNode:
-    pass
+
+class GlobalNode:
+    partition_id = -1
+    def set_partition_id(self,id):
+        self.partition_id = id
+    def get_partition_id(self,id):
+        return self.partition_id
+class QuadNode(GlobalNode):
+    def __init__(self,env:shapely.geometry.Polygon) -> None:
+        self.center = env.centroid()
+        self.sub_nodes = []
+    
+    
+    
+    def split(self,samples:list[shapely.geometry.Polygon],queue:queue.PriorityQueue)->None:
+        for index in range(0,4):
+            assert self.sub_nodes[index] is None
+            self.sub_nodes[index] = QuadNode(self.create_sub_env(index))
+            sub_env = self.sub_nodes[index].env
+            sub_samples = filter(lambda x:sub_env.intersects(x),samples)
+            queue.put(0,(self.sub_nodes[index],sub_samples))
+    
+    def find_nearest_id(self,point:shapely.geometry.Point,filter_)->int:
+        if self.partition_id != -1:
+            return self.partition_id if filter_(self) else -1
+        if point.getX > self.centre.getX:
+            if point.getY > self.centre.getY:
+                sub_index = 3
+            else:
+                sub_index = 1
+        else:
+            if point.getY > self.centre.getY:
+                sub_index = 2
+            else:
+                sub_index = 0
+        nearest_id = self.sub_nodes[sub_index].find_nearest_id(point,filter_)
+        if nearest_id == -1:
+            for index in range(4):
+                if index != sub_index:
+                    nearest_id = self.sub_nodes[index].find_nearest_id(point,filter_)
+                    
+    
+    def create_sub_env(self,index):
+        pass
+        
 
 class GlobalQuad:
     def __init__(self,spatial_bound) -> None:
         self.spatial_bound = spatial_bound
         self.root = QuadNode(self.spatial_bound)
         self.leaf_nodes = []
-    def build(samples,sample_rate,beta,k):
-        # comparator=Comparator
-        pass 
+    def build(self,samples,sample_rate,beta,k):
+        comparator=lambda x,y:0-(len(x[1])-len(y[1]))
+        max_num_per_partition = max(len(samples)//self.beta,math.ceil(4*self.sample_rate*k))
+        priority_queue = queue.PriorityQueue()
+        priority_queue.put((-len(samples),(self.root,samples)))
+        while len(priority_queue)<beta:
+            if len(priority_queue[0][1]) < max_num_per_partition:
+                self.leaf_nodes = [node[0] for node in priority_queue]
+                return
+            else:
+                max_node,max_samples = priority_queue.get()
+                # max_node.split()
+    
+        
+    
+    
 
 
 class GlobalRTree:
