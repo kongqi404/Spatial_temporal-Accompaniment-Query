@@ -1,4 +1,5 @@
 import time
+from math import sqrt, log
 
 import pyspark.rdd
 import shapely.geometry
@@ -48,24 +49,76 @@ class STKnnJoin:
             lambda row: is_intersects(left_time_range, row[1])) \
             .persist(StorageLevel.MEMORY_AND_DISK)
         right_global_info = do_statistic(validate_right_rdd, right_extractor)
-
+        # sample and build global index and partitioner
         global_bound = shapely.geometry.Polygon(right_global_info.get_env())
         global_range = right_global_info.get_time_range()
         global_index = STIndex(global_bound, global_range, self.alpha, self.beta, self.delta_milli,
                                self.k, self.is_quad_index)
-        # samples,sample_rate =
+        samples, sample_rate = sample(validate_right_rdd, right_extractor, right_global_info.get_count(), self.alpha,
+                                      self.beta)
+        partition_num = global_index.build(samples, sample_rate)
+
+        # unused
+        # partitioner = get_partitioner(partition_num)
+
+        bc_global_index = spark.broadcast(global_index)
+
+        # repartition right rdd
+        partitioned_right_rdd = validate_right_rdd \
+            .flatMap(lambda right_row: map(lambda x: (x, right_row),
+                                           bc_global_index
+                                           .value
+                                           .get_partition_ids_s(right_extractor.geom(right_row),
+                                                                right_extractor.start_time(
+                                                                    right_row),
+                                                                right_extractor.end_time(
+                                                                    right_row)))) \
+            .partitionBy(partition_num, lambda x: int(x)) \
+            .map(lambda x: x[1]) \
+            .mapPartitions(lambda row_iter: iter((pyspark.TaskContext.get().partitionId(), list(row_iter)))) \
+            .filter(lambda x: x[1] is not None)
+
+        partition_bound_accum = spark.accumulator((0, shapely.geometry.Polygon)) if not self.is_quad_index else None
+        # time_bin_map = partitioned_right_rdd.map(lambda partition_id,right_rows:partition_id,)
 
 
-def get_partitioner(partition_num: int) -> pyspark.rdd.Partitioner:
-    def num_partitions():
-        return partition_num
-
-    def get_partition(key):
-        return key
+# unused:
+# def get_partitioner(partition_num: int) -> pyspark.rdd.Partitioner:
+#     return pyspark.rdd.Partitioner(partition_num, lambda x: int(x))
 
 
 def sample(rdd: pyspark.RDD, _extractor: extractor.STExtractor, total_num, alpha, beta):
-    transfer = lambda row: STBound(_extractor.geom(row).boundary, _extractor.start_time(row), _extractor.end_time(row))
     num_partitions = alpha * beta
     sample_size = total_num if total_num < 1000 else max(num_partitions * 2, total_num // 100)
-    # fraction =
+
+    def num_std(s):
+        if s < 6:
+            return 12.0
+        elif s < 16:
+            return 9.0
+        else:
+            return 6.0
+
+    def compute_fraction_for_sample_size(sample_size_lower_bound, total, with_replacement):
+        """
+        self implement the computeFractionForSampleSize method of org.apache.spark.util.random.SamplingUtils
+        reference: https://spark.apache.org/docs/latest/api/java/index.html
+        and
+        https://github.com/apache/spark/blob/master/core/src/main/scala/org/apache/spark/util/random/SamplingUtils.scala
+        :param sample_size_lower_bound:sample size
+        :param total:size of RDD
+        :param with_replacement:whether sampling with replacement
+        :return:a sampling rate that guarantees sufficient sample size with 99.99% success rate
+        """
+        if with_replacement:
+            return max(sample_size_lower_bound + num_std(sample_size_lower_bound) * sqrt(sample_size_lower_bound),
+                       1e-10) / total
+        else:
+            return min(1.0, max(1e-10, sample_size_lower_bound / total - log(1e-4) + sqrt(
+                1e-4 ** 2 + 2 * 1e-4 * sample_size_lower_bound / total)))
+
+    fraction = compute_fraction_for_sample_size(sample_size, total_num, False)
+    samples = rdd.sample(withReplacement=False, fraction=fraction) \
+        .map(lambda row: STBound(_extractor.geom(row).boundary, _extractor.start_time(row), _extractor.end_time(row))) \
+        .collect()
+    return samples, fraction
