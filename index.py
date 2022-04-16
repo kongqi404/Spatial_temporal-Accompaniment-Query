@@ -18,7 +18,8 @@ class GlobalNode:
 
 class QuadNode(GlobalNode):
     def __init__(self, env: shapely.geometry.Polygon) -> None:
-        self.centre = env.centroid
+        self.env = env
+        self.centre = shapely.geometry.Point(env.centroid)
         self.sub_nodes = []
 
     def split(self, samples: list[shapely.geometry.Polygon], samples_queue: list) -> None:
@@ -47,9 +48,34 @@ class QuadNode(GlobalNode):
             for index in range(4):
                 if index != sub_index:
                     nearest_id = self.sub_nodes[index].find_nearest_id(point, _filter)
+                    if nearest_id != -1:
+                        return nearest_id
+            return -1
+        else:
+            return nearest_id
 
-    def create_sub_env(self, index):
-        pass
+    def find_intersect_ids(self, query_env: shapely.geometry.Polygon, id_collector: list[int]) -> None:
+        if self.env.intersects(query_env):
+            if self.partition_id != -1:
+                id_collector.append(self.partition_id)
+            else:
+                for sub_node in self.sub_nodes:
+                    sub_node.find_intersect_ids(query_env, id_collector)
+
+    def create_sub_env(self, index: int) -> shapely.geometry.Polygon:
+        min_x = 0
+        max_x = 0
+        min_y = 0
+        max_y = 0
+        if index == 0:
+            min_x, max_x, min_y, max_y = self.env.bounds[0], self.centre.x, self.env.bounds[1], self.centre.y
+        elif index == 1:
+            min_x, max_x, min_y, max_y = self.centre.x, self.env.bounds[2], self.env.bounds[1], self.centre.y
+        elif index == 2:
+            min_x, max_x, min_y, max_y = self.env.bounds[0], self.centre.x, self.centre.y, self.env.bounds[3]
+        elif index == 3:
+            min_x, max_x, min_y, max_y = self.centre.x, self.env.bounds[2], self.centre.y, self.env.bounds[3]
+        return shapely.geometry.box(min_x, min_y, max_x, max_y)
 
 
 class GlobalQuad:
@@ -72,11 +98,38 @@ class GlobalQuad:
                 return
             else:
                 max_node, max_samples = priority_queue[0][1]
-                # max_node.split()
+                max_node.split(max_samples, priority_queue)
+        self.leaf_nodes = map(lambda x: x[1][0], priority_queue)
+
+    def find_nearest_id(self, query_centre: shapely.geometry.Point, time_filter) -> int:
+        return self.root.find_nearest_id(query_centre, time_filter)
+
+    def find_intersect_ids(self, query_env: shapely.geometry.Polygon, id_collector: list[int]):
+        self.root.find_intersect_ids(query_env, id_collector)
+
+    def assign_partition_id(self, base_id: int) -> int:
+        for i in range(len(self.leaf_nodes)):
+            self.leaf_nodes[i].set_partition_id(base_id + i)
+        return base_id + len(self.leaf_nodes)
+
+    def get_leaf_env(self, index: int) -> shapely.geometry.Polygon:
+        return self.leaf_nodes[index].env
 
 
 class GlobalRTree:
-    pass
+    """
+    unfinished!!!!
+    """
+
+    def __init__(self, node_capacity: int):
+        self.root = []
+        self.leaf_nodes = []
+        self.node_capacity = node_capacity
+
+    def build(self, samples: list[shapely.geometry.Polygon]):
+        assert len(samples) > 0
+        self.leaf_nodes = []
+        self.root = []
 
 
 class TimePeriod:

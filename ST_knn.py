@@ -1,9 +1,11 @@
 import time
 
+import pyspark.rdd
 import shapely.geometry
 from pyspark import StorageLevel, RDD
 
 import extractor
+from index import STIndex, STBound
 from partition import do_statistic
 from time_utils import expand_time_range, is_intersects
 
@@ -49,4 +51,21 @@ class STKnnJoin:
 
         global_bound = shapely.geometry.Polygon(right_global_info.get_env())
         global_range = right_global_info.get_time_range()
-        # global_index =  STIndex(globalBound, globalRange, alpha, beta, deltaMilli, k, isQuadIndex)
+        global_index = STIndex(global_bound, global_range, self.alpha, self.beta, self.delta_milli,
+                               self.k, self.is_quad_index)
+        # samples,sample_rate =
+
+
+def get_partitioner(partition_num: int) -> pyspark.rdd.Partitioner:
+    def num_partitions():
+        return partition_num
+
+    def get_partition(key):
+        return key
+
+
+def sample(rdd: pyspark.RDD, _extractor: extractor.STExtractor, total_num, alpha, beta):
+    transfer = lambda row: STBound(_extractor.geom(row).boundary, _extractor.start_time(row), _extractor.end_time(row))
+    num_partitions = alpha * beta
+    sample_size = total_num if total_num < 1000 else max(num_partitions * 2, total_num // 100)
+    # fraction =
