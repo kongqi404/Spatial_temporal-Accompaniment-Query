@@ -6,6 +6,39 @@ import shapely.geometry
 import time_utils
 
 
+class TRCBasedBins:
+    def __init__(self, bin_num, k):
+        self.k = k
+        self.bin_num = bin_num
+        self.total = None
+        self.start_time = None
+        self.end_time = None
+        self.span_milli = None
+        self.left_max_sums = []
+        self.right_min_sums = []
+
+    def build(self, time_ranges: list[(int, int)]):
+        self.total = len(time_ranges)
+        self.start_time = min(map(lambda x: x[0], time_ranges))
+        self.end_time = max(map(lambda x: x[1], time_ranges))
+        self.span_milli = math.ceil((self.end_time - self.start_time + 1) / self.bin_num)
+        start_milli = self.start_time
+
+        min_nums = [0] * self.bin_num
+        for time_ in map(lambda x: x[0], time_ranges):
+            index = int((time_ - start_milli) / self.span_milli)
+            min_nums[index] += 1
+        max_nums = [0] * self.bin_num
+        for time_ in map(lambda x: x[1], time_ranges):
+            index = int((time_ - start_milli) / self.span_milli)
+            max_nums[index] += 1
+
+        def fold_left(lis: list, res, op):
+            for i in lis:
+                res = op(res, i)
+            return res
+
+
 class GlobalNode:
     partition_id = -1
 
