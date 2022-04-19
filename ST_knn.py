@@ -6,7 +6,7 @@ import shapely.geometry
 from pyspark import StorageLevel, RDD
 
 import extractor
-from index import STIndex, STBound
+from index import STIndex, STBound, TRCBasedBins
 from partition import do_statistic
 from time_utils import expand_time_range, is_intersects
 
@@ -79,7 +79,16 @@ class STKnnJoin:
             .filter(lambda x: x[1] is not None)
 
         partition_bound_accum = spark.accumulator((0, shapely.geometry.Polygon)) if not self.is_quad_index else None
-        # time_bin_map = partitioned_right_rdd.map(lambda partition_id,right_rows:partition_id,)
+
+        # 2022/4/19 unfinished!
+        def time_map(partition_id, right_rows):
+            bound = shapely.geometry.Polygon()
+            time_bin = TRCBasedBins(self.bin_num, self.k)
+            time_ranges = map(lambda x: (x[1][0], x[1][1]), right_rows)
+            for i in filter(lambda x: x[0].boundary(), right_rows):
+                bound = bound.union(i).boundary()
+
+        time_bin_map = partitioned_right_rdd.map()
 
 
 # unused:

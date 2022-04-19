@@ -10,12 +10,14 @@ class GlobalSpatialInfo:
         self.count = 0
 
     def add_geom(self, geom):
-        self.env = self.env.union(geom).bounds
+        min_x, min_y, max_x, max_y = self.env.union(geom).bounds
+        self.env = shapely.geometry.box(min_x, min_y, max_x, max_y)
         self.count += 1
         return self
 
     def combine(self, other):
-        self.env = self.env.union(other.env).bounds
+        min_x, min_y, max_x, max_y  = self.env.union(other.env).bounds
+        self.env = shapely.geometry.box(min_x, min_y, max_x, max_y)
         self.count += other.count
         return self
 
