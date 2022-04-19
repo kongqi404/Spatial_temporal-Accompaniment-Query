@@ -32,11 +32,19 @@ class TRCBasedBins:
         for time_ in map(lambda x: x[1], time_ranges):
             index = int((time_ - start_milli) / self.span_milli)
             max_nums[index] += 1
+        for i in reversed(min_nums):
+            self.right_min_sums.append(self.right_min_sums[-1] + i)
+        for i in max_nums:
+            self.left_max_sums.append(self.left_max_sums[-1] + i)
 
-        def fold_left(lis: list, res, op):
-            for i in lis:
-                res = op(res, i)
-            return res
+    def has_knn(self, query_range) -> bool:
+        if query_range[0] > self.end_time or query_range[1] < self.start_time:
+            return False
+        min_than_start = self.left_max_sums[(query_range[0] - self.start_time) // self.span_milli] \
+            if query_range[0] > self.start_time else 0
+        max_than_end = self.right_min_sums[self.bin_num - (query_range[1] - self.start_time) // self.span_milli - 1] \
+            if query_range[1] < self.end_time else 0
+        return self.total - min_than_start - max_than_end >= self.k
 
 
 class GlobalNode:
