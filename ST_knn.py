@@ -1,4 +1,5 @@
 import time
+import unittest
 from math import sqrt, log
 
 import pyspark.rdd
@@ -8,7 +9,7 @@ from pyspark import StorageLevel, RDD
 import extractor
 from index import STIndex, STBound, TRCBasedBins
 from partition import do_statistic
-from time_utils import expand_time_range, is_intersects
+import all_utils
 
 
 class STKnnJoin:
@@ -43,10 +44,10 @@ class STKnnJoin:
         spark = left_rdd.context
         left_rdd.persist(StorageLevel.MEMORY_AND_DISK)
         left_global_info = do_statistic(left_rdd, left_extractor)
-        left_time_range = expand_time_range(left_global_info.get_time_range(), delta_milli=self.delta_milli)
+        left_time_range = all_utils.expand_time_range(left_global_info.get_time_range(), delta_milli=self.delta_milli)
 
         validate_right_rdd = right_rdd.filter(
-            lambda row: is_intersects(left_time_range, row[1])) \
+            lambda row: all_utils.is_intersects(left_time_range, row[1])) \
             .persist(StorageLevel.MEMORY_AND_DISK)
         right_global_info = do_statistic(validate_right_rdd, right_extractor)
         # sample and build global index and partitioner
@@ -78,17 +79,42 @@ class STKnnJoin:
             .mapPartitions(lambda row_iter: iter((pyspark.TaskContext.get().partitionId(), list(row_iter)))) \
             .filter(lambda x: x[1] is not None)
 
-        partition_bound_accum = spark.accumulator((0, shapely.geometry.Polygon)) if not self.is_quad_index else None
+        partition_bound_accum = spark.accumulator((0, shapely.geometry.Polygon())) if not self.is_quad_index else None
 
         # 2022/4/19 unfinished!
-        def time_map(partition_id, right_rows):
+        def time_map(partition_id: int, right_rows):
             bound = shapely.geometry.Polygon()
             time_bin = TRCBasedBins(self.bin_num, self.k)
-            time_ranges = map(lambda x: (x[1][0], x[1][1]), right_rows)
-            for i in filter(lambda x: x[0].boundary(), right_rows):
-                bound = bound.union(i).boundary()
+            time_ranges = list(map(lambda x: (x[1][0], x[1][1]), right_rows))
+            if not self.is_quad_index:
+                for row in right_rows:
+                    bound = all_utils.transfer_bounds_to_box(bound.union(right_extractor.geom(row)).bounds)
+                partition_bound_accum.add((partition_id, bound))
+            time_bin.build(time_ranges)
+            return partition_id, time_bin
 
-        time_bin_map = partitioned_right_rdd.map()
+        time_bin_map = dict(partitioned_right_rdd.map(time_map).collect())
+
+        bc_time_bin_map = spark.broadcast(time_bin_map)
+        if not self.is_quad_index:
+            global_index.update_bound(partition_bound_accum.value.__dict__)
+            bc_global_index=spark.broadcast(global_index)
+
+        def indexed_right(partition_id,right_rows):
+            local_index = STRtree()
+        indexed_right_rdd = partitioned_right_rdd.map()
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # unused:

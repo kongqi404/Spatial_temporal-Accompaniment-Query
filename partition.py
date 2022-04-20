@@ -16,7 +16,7 @@ class GlobalSpatialInfo:
         return self
 
     def combine(self, other):
-        min_x, min_y, max_x, max_y  = self.env.union(other.env).bounds
+        min_x, min_y, max_x, max_y = self.env.union(other.env).bounds
         self.env = shapely.geometry.box(min_x, min_y, max_x, max_y)
         self.count += other.count
         return self

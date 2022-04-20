@@ -20,7 +20,7 @@ if __name__ == "__main__":
     store_path = "./res"
     st_knn_join = STKnnJoin(delta_milli, k, alpha, beta, bin_num)  # instance a class
 
-
+    
     def mapping(line):
         sp = line.split("\t")
         return (wkt.loads(sp[0]), (int(time.mktime(time.strptime(sp[1], "%Y-%m-%d %H:%M:%S"))),

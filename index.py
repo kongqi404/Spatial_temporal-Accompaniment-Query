@@ -3,7 +3,80 @@ import math
 
 import shapely.geometry
 
-import time_utils
+import all_utils
+from extractor import STExtractor
+
+# unfinished 4/20
+class STBoundable:
+    def __init__(self):
+        self.min_time = None
+        self.max_time = None
+        self.envelope = None
+    def get_min_time(self):
+        return self.min_time
+    def get_max_time(self):
+        return self.max_time
+    def get_bound(self):
+        return self.envelope
+    def centre_t(self):
+        return (self.min_time+self.max_time) /2
+    def centre_x(self):
+        return self.envelope
+class STRTreeNode:
+    pass
+
+
+class STItemBoundable:
+    pass
+
+
+class STRTreeIndex:
+    def __init__(self, extractor: STExtractor, node_capacity=10):
+        self.node_capacity = node_capacity
+        self.extractor = extractor
+        self.root = None
+        self.item_bound_ables = []
+        self.empty = True
+        self.built = False
+
+    def insert(self, item):
+        self.empty = False
+        self.item_bound_ables.append(STItemBoundable(item, self.extractor))
+
+    def build(self):
+        if not self.built:
+            self.root = self.create_node(0) if len(self.item_bound_ables) == 0 \
+                else self.create_higher_levels(self.item_bound_ables, -1)
+            self.item_bound_ables = None
+            self.built = True
+
+    def is_empty(self) -> bool:
+        return self.empty
+
+    @staticmethod
+    def create_node(level: int) -> STRTreeNode:
+        return STRTreeNode(level)
+
+    def create_higher_levels(self, boundables: list, level: int) -> STRTreeNode:
+        assert len(boundables) > 0
+        parent_boundables = self.create_parent_boundables(boundables, level + 1)
+        if len(parent_boundables) == 1:
+            return parent_boundables[0]
+        else:
+            return self.create_higher_levels(parent_boundables, level + 1)
+
+    def create_parent_boundables(self, child_boundables: list[], new_level: int) -> list:
+        assert len(child_boundables) > 0
+        min_leaf_count = math.ceil(len(child_boundables)/self.node_capacity)
+        slice_count = math.ceil(math.pow(min_leaf_count,1/3))
+        # unfinished
+        time_sort_iter = sorted(child_boundables)
+        return []
+
+
+class STRtree:
+    def __init__(self, k, bin_num):
+        pass
 
 
 class TRCBasedBins:
@@ -285,7 +358,7 @@ class STIndex:
         return partition_num_id
 
     def get_partition_id(self, query_geom, query_range, time_bin_map) -> int:
-        expand_query_range = time_utils.expand_time_range(query_range, delta_milli=self.delta_milli)
+        expand_query_range = all_utils.expand_time_range(query_range, delta_milli=self.delta_milli)
         partition_id = -1
         for period in self.get_time_periods(expand_query_range):
             if partition_id == -1:
@@ -304,7 +377,7 @@ class STIndex:
         return result
 
     def get_partition_ids_r_second(self, geom, start, end, distance) -> list[int]:
-        expand_query_range = time_utils.expand_time_range((start, end), self.delta_milli)
+        expand_query_range = all_utils.expand_time_range((start, end), self.delta_milli)
         result = []
         for period in self.get_time_periods(expand_query_range):
             result += period.get_spatial_index.get_partition_ids(geom)
