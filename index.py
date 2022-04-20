@@ -65,7 +65,7 @@ class STRTreeIndex:
         else:
             return self.create_higher_levels(parent_boundables, level + 1)
 
-    def create_parent_boundables(self, child_boundables: list[], new_level: int) -> list:
+    def create_parent_boundables(self, child_boundables: list, new_level: int) -> list:
         assert len(child_boundables) > 0
         min_leaf_count = math.ceil(len(child_boundables)/self.node_capacity)
         slice_count = math.ceil(math.pow(min_leaf_count,1/3))
