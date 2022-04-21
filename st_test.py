@@ -7,10 +7,11 @@ from partition import GlobalSpatialInfo
 
 
 class MyTestCase(unittest.TestCase):
-    def test_spark_serialize(self):
-        spark = pyspark.sql.SparkSession.builder.appName("st_knn").getOrCreate()
+    def test_list_next(self):
+        a = iter([])
+        i=next(a)
+        self.assertIsNone(i)
 
-        spark.stop()
     def test_boundary(self):
         coords = [(0, 0), (1, 1), (1, 0)]
         poly1 = shapely.geometry.Polygon(coords)

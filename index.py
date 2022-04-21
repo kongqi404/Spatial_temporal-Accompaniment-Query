@@ -1,10 +1,13 @@
 import heapq
 import math
+import queue
 
 import shapely.geometry
 
 import all_utils
+import extractor
 from extractor import STExtractor
+
 
 # unfinished 4/20
 class STBoundable:
@@ -12,28 +15,93 @@ class STBoundable:
         self.min_time = None
         self.max_time = None
         self.envelope = None
+
     def get_min_time(self):
         return self.min_time
+
     def get_max_time(self):
         return self.max_time
+
     def get_bound(self):
         return self.envelope
+
     def centre_t(self):
-        return (self.min_time+self.max_time) /2
+        return (self.min_time + self.max_time) / 2
+
     def centre_x(self):
         return self.envelope
-class STRTreeNode:
-    pass
 
 
-class STItemBoundable:
-    pass
+class STRTreeNode(STBoundable):
+    def __init__(self, level):
+        super().__init__()
+        self.level = level
+        self.child_boundables = []
+        self.bound = None
+        self.min_time = None
+        self.max_time = None
+
+    def get_min_time(self):
+        if self.min_time is None:
+            self.min_time = min(map(lambda x: x.get_min_time(), self.child_boundables))
+        return self.min_time
+
+    def get_max_time(self):
+        if self.max_time is None:
+            self.max_time = max(map(lambda x: x.get_max_time(), self.child_boundables))
+        return self.max_time
+
+    def get_bound(self):
+        if self.bound is None:
+            self.bound = shapely.geometry.Polygon()
+            assert len(self.child_boundables) > 0
+            for sub_node in self.child_boundables:
+                self.bound = all_utils.transfer_bounds_to_box(self.bound.union(sub_node.get_bound()).bounds)
+        return self.bound
+
+    def get_level(self):
+        return self.level
+
+    def __len__(self):
+        return len(self.child_boundables)
+
+    def is_empty(self):
+        return len(self.child_boundables) > 0
+
+    def add_child_boundable(self, child_node: STBoundable):
+        assert self.bound is None
+        self.child_boundables.append(child_node)
+
+    def get_child_boundable(self):
+        return self.child_boundables
+
+
+class STItemBoundable(STBoundable):
+    def __init__(self, item, _extractor: STExtractor):
+        super().__init__()
+        self.extractor = _extractor
+        self.item = item
+
+    def get_bound(self):
+        return all_utils.transfer_bounds_to_box(self.extractor.geom(self.item).bounds)
+
+    def get_item(self):
+        return self.item
+
+    def get_geom(self):
+        return self.extractor.geom(self.item)
+
+    def get_min_time(self):
+        return self.extractor.start_time(self.item)
+
+    def get_max_time(self):
+        return self.extractor.end_time(self.item)
 
 
 class STRTreeIndex:
-    def __init__(self, extractor: STExtractor, node_capacity=10):
+    def __init__(self, _extractor: STExtractor, node_capacity=10):
         self.node_capacity = node_capacity
-        self.extractor = extractor
+        self.extractor = _extractor
         self.root = None
         self.item_bound_ables = []
         self.empty = True
@@ -67,11 +135,71 @@ class STRTreeIndex:
 
     def create_parent_boundables(self, child_boundables: list, new_level: int) -> list:
         assert len(child_boundables) > 0
-        min_leaf_count = math.ceil(len(child_boundables)/self.node_capacity)
-        slice_count = math.ceil(math.pow(min_leaf_count,1/3))
-        # unfinished
-        time_sort_iter = sorted(child_boundables)
-        return []
+        min_leaf_count = math.ceil(len(child_boundables) / self.node_capacity)
+        slice_count = math.ceil(math.pow(min_leaf_count, 1 / 3))
+        time_sort_iter = sorted(child_boundables)  # key is not set!!!!
+        slice_capacity = math.ceil(len(child_boundables) / slice_count)
+        parent_boundables = []
+        # their can be refactored !!!
+        it = 0
+        for _ in range(slice_count):
+            time_slice = []
+
+            while it < len(time_sort_iter) is not None and len(time_slice) < slice_capacity:
+                time_slice.append(time_sort_iter[it])
+                it += 1
+            vertical_slices = self.create_vertical_slices(time_slice, slice_count)
+            for i in range(len(vertical_slices)):
+                parent_boundables += self.create_parent_boundable_from_vertical_slice(vertical_slices[i], new_level)
+
+    # this function can be refactored !!!
+    @staticmethod
+    def create_vertical_slices(child_boundables, slice_count: int):
+        slice_capacity = math.ceil(len(child_boundables) / slice_count)
+        its = sorted(child_boundables)
+        it = 0
+        slices = []
+        for _ in range(slice_count):
+            current_slice = []
+            while it < len(its) and len(current_slice) < slice_capacity:
+                current_slice.append(its[it])
+                it += 1
+            slices.append(current_slice)
+        return slices
+
+    def create_parent_boundable_from_vertical_slice(self, child_boundables: list, new_level):
+        assert len(child_boundables) > 0
+        parent_boundables = [self.create_node(new_level)]
+        sorted_child_boundables = sorted(child_boundables)  # key is not set!!!!
+        it = 0
+        while it < len(sorted_child_boundables):
+            if len(parent_boundables[-1]) == self.node_capacity:
+                parent_boundables.append(self.create_node(new_level))
+            parent_boundables[-1].add_child_boundable(sorted_child_boundables[it])
+        return parent_boundables
+
+    # unfinished!!!
+    def nearest_neighbour(self, query_geom: shapely.geometry.Polygon, query_start, query_end, k, is_valid,
+                          max_distance):
+        if not self.built:
+            self.build()
+        query_extractor = STExtractor()
+        distance_lower_bound = max_distance
+        node_queue = self.build_queue(True)
+        quert_item = (query_geom, query_start, query_end)
+        query_boundable = STItemBoundable()  # unfinished!!!
+        node_queue.put((self.root, self.distance(self.root, query_boundable)))  # bug
+
+        candidate_queue = self.build_queue(False)
+        while len(node_queue) > 0:
+            pass
+        pass
+
+    def distance(self, one_boundable, other_boundable):
+        pass
+
+    def build_queue(self, is_normal: bool):
+        comparator = lambda x: x[1]
 
 
 class STRtree:
