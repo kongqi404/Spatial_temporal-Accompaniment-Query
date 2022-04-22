@@ -22,3 +22,12 @@ def time_refer_point(range1, range2):
 def transfer_bounds_to_box(bounds: tuple) -> shapely.geometry.Polygon:
     min_x, min_y, max_x, max_y = bounds
     return shapely.geometry.box(min_x, min_y, max_x, max_y)
+
+
+def expand_envelop_by_dis(bounds: tuple, distance):
+    min_x, min_y, max_x, max_y = bounds
+    min_x -= distance
+    min_y -= distance
+    max_x += distance
+    max_y += distance
+    return min_x, min_y, max_x, max_y

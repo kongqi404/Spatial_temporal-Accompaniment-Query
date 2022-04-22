@@ -28,6 +28,7 @@ class STBoundable:
     def centre_t(self):
         return (self.min_time + self.max_time) / 2
 
+    # unfinished
     def centre_x(self):
         return self.envelope
 
@@ -72,7 +73,7 @@ class STRTreeNode(STBoundable):
         assert self.bound is None
         self.child_boundables.append(child_node)
 
-    def get_child_boundable(self):
+    def get_child_boundables(self):
         return self.child_boundables
 
 
@@ -185,26 +186,68 @@ class STRTreeIndex:
             self.build()
         query_extractor = STExtractor()
         distance_lower_bound = max_distance
-        node_queue = self.build_queue(True)
-        quert_item = (query_geom, query_start, query_end)
+        node_queue = []
+        query_item = (query_geom, query_start, query_end)
         query_boundable = STItemBoundable()  # unfinished!!!
-        node_queue.put((self.root, self.distance(self.root, query_boundable)))  # bug
+        heapq.heappush(node_queue, (self.distance(self.root, query_boundable), self.root))
+        # node_queue.put((self.root, self.distance(self.root, query_boundable)))  # bug
 
-        candidate_queue = self.build_queue(False)
-        while len(node_queue) > 0:
-            pass
-        pass
+        candidate_queue = []
+        while len(node_queue) > 0 and node_queue[0][0] < distance_lower_bound:
+            current_distance, nearest_node = heapq.heappop(node_queue)
+            if isinstance(nearest_node, STItemBoundable):
+                if is_valid(nearest_node.get_item()):
+                    if len(candidate_queue) < k:
+                        heapq.heappush(candidate_queue, (-current_distance, nearest_node))
+                    else:
+                        if -candidate_queue[0][0] > current_distance:
+                            heapq.heappop(candidate_queue)
+                            heapq.heappush(candidate_queue, (-current_distance, nearest_node))
+                        distance_lower_bound = -candidate_queue[0][0]
+            elif isinstance(nearest_node, STRTreeNode):
+                for child_boundable in nearest_node.get_child_boundables():
+                    child = child_boundable
+                    if all_utils.is_intersects((query_start, query_end), (child.get_min_time(), child.get_max_time())):
+                        dist = self.distance(child, query_boundable)
+                        heapq.heappush(node_queue, (dist, child))
 
-    def distance(self, one_boundable, other_boundable):
-        pass
+        return sorted(map(lambda x: (x[1].get_item(), -x[0]), candidate_queue), key=lambda x: x[1])
 
-    def build_queue(self, is_normal: bool):
-        comparator = lambda x: x[1]
+    @staticmethod
+    def distance(one_boundable, other_boundable):
+        if isinstance(one_boundable, STItemBoundable) and isinstance(other_boundable, STItemBoundable):
+            return one_boundable.get_geom().distance(other_boundable.get_geom())
+        else:
+            return one_boundable.get_bound().distance(other_boundable.get_bound())
+
+    # unused
+    # @staticmethod
+    # def build_queue(is_normal: bool):  # is a priority_queue  unfinished
+    #     comparator = lambda x, y: x[1] - y[1] if is_normal else -(x[1] - y[1])
+    #     return [], comparator
 
 
 class STRtree:
-    def __init__(self, k, bin_num):
-        pass
+    def __init__(self, _extractor: STExtractor, k: int, bin_num: int):
+        self.bin_num = bin_num
+        self.k = k
+        self.extractor = _extractor
+        self.is_built = False
+        self.empty = True
+        self.rtree = STRTreeIndex(self.extractor)
+
+    def build(self, rows: list):
+        for row in rows:
+            self.rtree.insert(row)
+            self.rtree.build()
+            self.empty = len(rows) > 0
+            self.is_built = True
+
+    def nearest_neighbour(self, query_geom, query_start, query_end, k, is_valid, max_distance=1e10) -> list:
+        return self.rtree.nearest_neighbour(query_geom, query_start, query_end, k, is_valid, max_distance)
+
+    def is_empty(self):
+        return self.empty
 
 
 class TRCBasedBins:
@@ -270,6 +313,7 @@ class QuadNode(GlobalNode):
             self.sub_nodes[index] = QuadNode(self.create_sub_env(index))
             sub_env = self.sub_nodes[index].env
             sub_samples = filter(lambda x: sub_env.intersects(x), samples)
+            # unfinished!
             heapq.heappush(samples_queue, (0, (self.sub_nodes[index], sub_samples)))
 
     def find_nearest_id(self, point: shapely.geometry.Point, _filter) -> int:
@@ -332,6 +376,7 @@ class GlobalQuad:
 
         max_num_per_partition = max(len(samples) // beta, math.ceil(4 * sample_rate * k))
         priority_queue = []
+        # unfinished
         heapq.heappush(priority_queue, (comparator(samples), (self.root, samples)))
         # priority_queue.put((comparator(samples), (self.root, samples)))
         while len(priority_queue) < beta:

@@ -7,7 +7,7 @@ import shapely.geometry
 from pyspark import StorageLevel, RDD
 
 import extractor
-from index import STIndex, STBound, TRCBasedBins
+from index import STIndex, STBound, TRCBasedBins, STRtree
 from partition import do_statistic
 import all_utils
 
@@ -101,20 +101,72 @@ class STKnnJoin:
             bc_global_index=spark.broadcast(global_index)
 
         def indexed_right(partition_id,right_rows):
-            local_index = STRtree()
-        indexed_right_rdd = partitioned_right_rdd.map()
+            local_index = STRtree(right_extractor,self.k,self.bin_num)
+            local_index.build(right_rows)
+            return partition_id,right_rows
+        indexed_right_rdd = partitioned_right_rdd\
+            .map(indexed_right)\
+            .persist(StorageLevel.MEMORY_AND_DISK)
+
+        local_join =
+
+class RowWithId:
+    def __init__(self,_id:int,row):
+        self.row = row
+        self.id = _id
+    def __eq__(self, other):
+        return self.id==other.id
+    def __hash__(self):
+        return self.id.__hash__()
+
+class ApproximateContainer:
+    def __init__(self,duplicate_knn,partition_id,expand_dist):
+        self.expand_dist = expand_dist
+        self.partition_id = partition_id
+        self.duplicate_knn = duplicate_knn
 
 
+class LocalJoin:
+    def __init__(self, left_extractor: extractor.STExtractor, right_extractor:extractor.STExtractor, delta_milli, k):
+        self.k = k
+        self.delta_milli = delta_milli
+        self.right_extractor = right_extractor
+        self.left_extractor = left_extractor
+    def first_round_join(self,left_rows:list[RowWithId],local_index:STRtree,partition_bound:STBound,partition_id:int):
+        if len(left_rows)==0 or local_index is None:
+            return None
+        def mapping(row_with_id:RowWithId):
+            if row_with_id.id>0:
+                left_geom = self.left_extractor.geom(row_with_id.row)
+                left_start_time = self.left_extractor.start_time(row_with_id.row)
+                left_end_time = self.left_extractor.end_time(row_with_id.row)
+                left_time_range = all_utils.expand_time_range((left_start_time,left_end_time),self.delta_milli)
+                is_valid = lambda right_row:all_utils.is_intersects(left_time_range,(self.right_extractor.start_time(right_row),self.right_extractor.end_time(right_row)))
+                candidate_with_dist = local_index.nearest_neighbour(left_geom,left_time_range[0],left_time_range[1],self.k,is_valid)
+                assert len(candidate_with_dist) == self.k
+                # left_geom_env = all_utils.transfer_bounds_to_box(left_geom.bounds)
+                max_dist = candidate_with_dist[-1][1]
+                left_geom_env=all_utils.transfer_bounds_to_box(all_utils.expand_envelop_by_dis(left_geom.bounds,max_dist))
+                duplicated_candidates = filter(lambda right_row:
+                                               self.is_reverse(partition_bound,left_geom_env,
+                                                               all_utils.transfer_bounds_to_box(
+                                                                   self.right_extractor.geom(right_row[0]).bounds),
+                                                               left_time_range,
+                                                               (self.right_extractor.start_time(right_row[0]),
+                                                                self.right_extractor.end_time(right_row[0]))),
+                                               candidate_with_dist)
+                return row_with_id,ApproximateContainer(duplicated_candidates,partition_id,max_dist)
+            else:
+                return row_with_id,ApproximateContainer([],partition_id,1e10)
 
+        return map(mapping,left_rows)
+    # unfinished!!! 4/22!!!
+    def second_round_join(self,left_rows:list[(RowWithId,ApproximateContainer)],local_index:STRtree,partition_bound:STBound):
+        if len(left_rows)==0 or local_index is None:
+            return None
 
-
-
-
-
-
-
-
-
+    def is_reverse(self):
+        pass
 
 
 # unused:

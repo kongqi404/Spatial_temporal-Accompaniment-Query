@@ -4,7 +4,7 @@ import shapely.geometry
 class STExtractor:
 
     @staticmethod
-    def geom(row: (shapely.geometry.GeometryCollection, (int, int))) -> shapely.geometry.base.BaseGeometry:
+    def geom(row: (shapely.geometry.Polygon, (int, int))) -> shapely.geometry.Polygon:
         return row[0]
 
     @staticmethod
