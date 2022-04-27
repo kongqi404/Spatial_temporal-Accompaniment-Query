@@ -370,6 +370,9 @@ class GlobalQuad:
         self.root = QuadNode(self.spatial_bound)
         self.leaf_nodes = []
 
+    def update_bound(self, leaf_node_map: dict):
+        pass
+
     def build(self, samples, sample_rate, beta, k) -> None:
         def comparator(x):
             return -len(x)
@@ -418,6 +421,9 @@ class GlobalRTree:
         self.leaf_nodes = []
         self.root = []
 
+    def update_bound(self, leaf_node_map: dict):
+        pass
+
 
 class TimePeriod:
 
@@ -427,8 +433,8 @@ class TimePeriod:
         self.period_end = period_end
         self.period_start = period_start
 
-    lower_partition_id = None
-    upper_partition_id = None
+    lower_partition_id: int = None
+    upper_partition_id: int = None
     spatial_index = None
 
     def build_spatial_index(self, samples, global_bound, sample_rate, beta, k, is_quad_index):
@@ -450,7 +456,7 @@ class TimePeriod:
     def get_partition_env(self, partition_id: int):
         return self.spatial_index.get_leaf_env(partition_id - self.lower_partition_id)
 
-    def get_spatial_index(self):
+    def get_spatial_index(self) -> GlobalQuad:
         return self.spatial_index
 
 
@@ -483,7 +489,7 @@ class STIndex:
         self.global_range = global_range
         self.global_env = global_env
 
-    time_periods = []
+    time_periods: list[TimePeriod] = []
     is_updated = False
 
     def is_update(self):
@@ -555,6 +561,12 @@ class STIndex:
         for period in self.get_time_periods(expand_query_range):
             result += period.get_spatial_index.get_partition_ids(geom)
         return result
+
+    def get_partition(self, partition_id: int):
+        period: TimePeriod = filter(lambda x: x.contains_partition(partition_id), self.time_periods)[0]
+        env = period.get_partition_env(partition_id)
+        return STBound(env, period.period_start, period.period_end)
+
 
     def get_time_periods(self, query_range):
         start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))

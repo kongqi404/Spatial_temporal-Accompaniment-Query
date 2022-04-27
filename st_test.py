@@ -7,10 +7,6 @@ from partition import GlobalSpatialInfo
 
 
 class MyTestCase(unittest.TestCase):
-    def test_list_next(self):
-        a = iter([])
-        i=next(a)
-        self.assertIsNone(i)
 
     def test_boundary(self):
         coords = [(0, 0), (1, 1), (1, 0)]
