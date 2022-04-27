@@ -193,6 +193,7 @@ class STKnnJoin:
         original_time = time.time()  # current time
         spark = left_rdd.context
         left_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+        print(left_rdd.collect()[0][0])
         left_global_info = do_statistic(left_rdd)
         left_time_range = all_utils.expand_time_range(left_global_info.get_time_range(), delta_milli=self.delta_milli)
 

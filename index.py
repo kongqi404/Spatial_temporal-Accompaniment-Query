@@ -368,7 +368,7 @@ class GlobalQuad:
     def __init__(self, spatial_bound) -> None:
         self.spatial_bound = spatial_bound
         self.root = QuadNode(self.spatial_bound)
-        self.leaf_nodes = []
+        self.leaf_nodes: list[QuadNode] = []
 
     def update_bound(self, leaf_node_map: dict):
         pass
@@ -502,7 +502,7 @@ class STIndex:
 
     def build(self, samples: list[STBound], sample_rate):
         min_time, max_time = self.global_range
-        sorted_samples = sorted(samples, key=lambda a, b: a.start_time < b.start_time)
+        sorted_samples = sorted(samples, key=lambda x: x.start_time)
         avg = sum(map(lambda x: x.end_time - x.start_time, sorted_samples)) / len(samples)
         min_span_milli = max(2 * self.delta_milli, avg, (max_time - min_time) / self.alpha)
         min_sample_num = max(len(samples) // self.alpha, sample_rate * self.beta * self.k)
@@ -527,7 +527,7 @@ class STIndex:
         time_span += max_time - sweep_line
         density = len(sample_holder) / time_span
         period = TimePeriod(period_start, sweep_line, density)
-        period.build_spatial_index(map(lambda x: x.env, sample_holder), self.global_env, sample_rate, self.beta,
+        period.build_spatial_index(list(map(lambda x: x.env, sample_holder)), self.global_env, sample_rate, self.beta,
                                    self.k, self.is_quad_index)
         self.time_periods.append(period)
         base_id = 0
@@ -566,7 +566,6 @@ class STIndex:
         period: TimePeriod = filter(lambda x: x.contains_partition(partition_id), self.time_periods)[0]
         env = period.get_partition_env(partition_id)
         return STBound(env, period.period_start, period.period_end)
-
 
     def get_time_periods(self, query_range):
         start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))

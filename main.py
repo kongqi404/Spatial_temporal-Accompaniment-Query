@@ -4,6 +4,7 @@ import pyspark
 
 from shapely import wkt
 
+import all_utils
 from ST_knn import STKnnJoin
 from extractor import STExtractor
 
@@ -20,11 +21,12 @@ if __name__ == "__main__":
     store_path = "./res"
     st_knn_join = STKnnJoin(delta_milli, k, alpha, beta, bin_num)  # instance a class
 
-    
+
     def mapping(line):
         sp = line.split("\t")
-        return (wkt.loads(sp[0]), (int(time.mktime(time.strptime(sp[1], "%Y-%m-%d %H:%M:%S"))),
-                                   int(time.mktime(time.strptime(sp[2], "%Y-%m-%d %H:%M:%S")))))
+        return (all_utils.transfer_bounds_to_box(wkt.loads(sp[0]).bounds),
+                (int(time.mktime(time.strptime(sp[1], "%Y-%m-%d %H:%M:%S"))),
+                 int(time.mktime(time.strptime(sp[2], "%Y-%m-%d %H:%M:%S")))))
 
 
     def read_rdd(file_path):
