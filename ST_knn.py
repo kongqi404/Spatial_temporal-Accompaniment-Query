@@ -200,6 +200,7 @@ class STKnnJoin:
         validate_right_rdd = right_rdd.filter(
             lambda row: all_utils.is_intersects(left_time_range, row[1])) \
             .persist(StorageLevel.MEMORY_AND_DISK)
+
         right_global_info = do_statistic(validate_right_rdd)
         # sample and build global index and partitioner
         global_bound = right_global_info.get_env()
@@ -216,20 +217,24 @@ class STKnnJoin:
         bc_global_index = spark.broadcast(global_index)
 
         # repartition right rdd and insert global index
-        partitioned_right_rdd = validate_right_rdd \
-            .flatMap(lambda right_row: map(lambda x: (x, right_row),
-                                           bc_global_index
-                                           .value
-                                           .get_partition_ids_s(right_extractor.geom(right_row),
-                                                                right_extractor.start_time(
-                                                                    right_row),
-                                                                right_extractor.end_time(
-                                                                    right_row)))) \
-            .partitionBy(partition_num, lambda x: int(x)) \
-            .map(lambda x: x[1]) \
-            .mapPartitions(lambda row_iter: iter((pyspark.TaskContext.get().partitionId(), list(row_iter)))) \
-            .filter(lambda x: x[1] is not None)
+        def f_mp(iterator):
+            yield pyspark.TaskContext.get().partitionId(), list(iterator)
 
+        # partitioned_right_rdd = validate_right_rdd \
+        #     .flatMap(lambda right_row: list(map(lambda x: (x, right_row),
+        #                                         bc_global_index
+        #                                         .value
+        #                                         .get_partition_ids_s(right_row[0], right_row[1][0], right_row[1][1]))))\
+        #     .partitionBy(partition_num) \
+        #     .map(lambda x: x[1]) \
+        #     .mapPartitions(f_mp) \
+        #     .filter(lambda x: len(x[1]) > 0)
+        # print(partitioned_right_rdd.collect())
+        print(validate_right_rdd.flatMap(lambda right_row: list(map(lambda x: (x, right_row),
+                                                                    bc_global_index
+                                                                    .value
+                                                                    .get_partition_ids_s(right_row[0], right_row[1][0],
+                                                                                         right_row[1][1])))).collect())
         partition_bound_accum = spark.accumulator((0, shapely.geometry.Polygon())) if not self.is_quad_index else None
 
         def time_map(partition_id: int, right_rows):
@@ -327,8 +332,7 @@ class STKnnJoin:
 
         res_rdd: RDD = zip_partitions(left_repartition_rdd, indexed_right_rdd, zip_partitions_func2).groupByKey(). \
             map(lambda row_with_id, candidate_iter: (
-                row_with_id.row, sorted(candidate_iter, key=candidate_iter[1])[:self.k]))
+            row_with_id.row, sorted(candidate_iter, key=candidate_iter[1])[:self.k]))
         print(res_rdd.count())
-        total_time = time.time()-original_time
+        total_time = time.time() - original_time
         print(f"total time: {total_time} seconds")
-

@@ -3,6 +3,7 @@ import math
 import queue
 
 import shapely.geometry
+from shapely.geometry import Polygon, Point
 
 import all_utils
 import extractor
@@ -305,16 +306,16 @@ class QuadNode(GlobalNode):
     def __init__(self, env: shapely.geometry.Polygon) -> None:
         self.env = env
         self.centre = shapely.geometry.Point(env.centroid)
-        self.sub_nodes = []
+        self.sub_nodes: list[QuadNode] = []
 
     def split(self, samples: list[shapely.geometry.Polygon], samples_queue: list) -> None:
         for index in range(0, 4):
             assert self.sub_nodes[index] is None
-            self.sub_nodes[index] = QuadNode(self.create_sub_env(index))
+            self.sub_nodes.append(QuadNode(self.create_sub_env(index)))
             sub_env = self.sub_nodes[index].env
-            sub_samples = filter(lambda x: sub_env.intersects(x), samples)
-            # unfinished!
-            heapq.heappush(samples_queue, (0, (self.sub_nodes[index], sub_samples)))
+            sub_samples = list(filter(lambda x: sub_env.intersects(x), samples))
+
+            heapq.heappush(samples_queue, (-len(sub_samples), (self.sub_nodes[index], sub_samples)))
 
     def find_nearest_id(self, point: shapely.geometry.Point, _filter) -> int:
         if self.partition_id != -1:
@@ -365,7 +366,7 @@ class QuadNode(GlobalNode):
 
 
 class GlobalQuad:
-    def __init__(self, spatial_bound) -> None:
+    def __init__(self, spatial_bound: Polygon):
         self.spatial_bound = spatial_bound
         self.root = QuadNode(self.spatial_bound)
         self.leaf_nodes: list[QuadNode] = []
@@ -373,23 +374,23 @@ class GlobalQuad:
     def update_bound(self, leaf_node_map: dict):
         pass
 
-    def build(self, samples, sample_rate, beta, k) -> None:
-        def comparator(x):
-            return -len(x)
+    def build(self, samples: list[Polygon], sample_rate, beta, k):
+        # def comparator(x):
+        #     return -len(x)
 
         max_num_per_partition = max(len(samples) // beta, math.ceil(4 * sample_rate * k))
         priority_queue = []
         # unfinished
-        heapq.heappush(priority_queue, (comparator(samples), (self.root, samples)))
+        heapq.heappush(priority_queue, (-len(samples), (self.root, samples)))
         # priority_queue.put((comparator(samples), (self.root, samples)))
         while len(priority_queue) < beta:
-            if len(priority_queue[0][1]) < max_num_per_partition:
-                self.leaf_nodes = [node[0] for node in priority_queue]
+            if len(priority_queue[0][1][1]) < max_num_per_partition:
+                self.leaf_nodes = [node[1][0] for node in priority_queue]
                 return
             else:
-                max_node, max_samples = priority_queue[0][1]
+                max_node, max_samples = heapq.heappop(priority_queue)[1]
                 max_node.split(max_samples, priority_queue)
-        self.leaf_nodes = map(lambda x: x[1][0], priority_queue)
+        self.leaf_nodes = list(map(lambda x: x[1][0], priority_queue))
 
     def find_nearest_id(self, query_centre: shapely.geometry.Point, time_filter) -> int:
         return self.root.find_nearest_id(query_centre, time_filter)
@@ -404,6 +405,25 @@ class GlobalQuad:
 
     def get_leaf_env(self, index: int) -> shapely.geometry.Polygon:
         return self.leaf_nodes[index].env
+
+    def get_partition_id(self, query_geom: Polygon, query_range: tuple, time_bin_map: dict[int, TRCBasedBins]):
+        filter_func = lambda leaf_node: \
+            time_bin_map.get(leaf_node.get_partition_id).has_knn(query_range) \
+                if time_bin_map.get(leaf_node.get_partition_id) is not None \
+                else False
+        self.get_partition_id_func(query_geom, filter_func)
+
+    def get_partition_id_func(self, query_geom: Polygon, filter_func) -> int:
+        query_centre = query_geom.centroid()
+        return self.find_nearest_id(query_centre, filter_func)
+
+    def get_partition_ids(self, query_geom: Polygon, distance) -> list[int]:
+        geom_env = all_utils.transfer_bounds_to_box(all_utils.expand_envelop_by_dis(query_geom.bounds,
+                                                                                    distance)) if distance > 0 else all_utils.transfer_bounds_to_box(
+            query_geom.bounds)
+        id_collector = []
+        self.find_intersect_ids(geom_env, id_collector)
+        return id_collector
 
 
 class GlobalRTree:
@@ -428,22 +448,21 @@ class GlobalRTree:
 class TimePeriod:
 
     def __init__(self, period_start, period_end, density):
-
+        self.spatial_index = None
         self.density = density
         self.period_end = period_end
         self.period_start = period_start
 
     lower_partition_id: int = None
     upper_partition_id: int = None
-    spatial_index = None
 
     def build_spatial_index(self, samples, global_bound, sample_rate, beta, k, is_quad_index):
         if is_quad_index:
             self.spatial_index = GlobalQuad(global_bound)
             self.spatial_index.build(samples, sample_rate, beta, k)
-        else:
-            self.spatial_index = GlobalRTree(max(10, len(samples) // beta))
-            self.spatial_index.build(samples)
+        # else:
+        #     self.spatial_index = GlobalRTree(max(10, len(samples) // beta))
+        #     self.spatial_index.build(samples)
 
     def assign_partition_id(self, lower_id):
         self.lower_partition_id = lower_id
@@ -541,7 +560,7 @@ class STIndex:
         partition_id = -1
         for period in self.get_time_periods(expand_query_range):
             if partition_id == -1:
-                partition_id = period.get_spatial_index.get_partition_id(query_geom, expand_query_range, time_bin_map)
+                partition_id = period.get_spatial_index().get_partition_id(query_geom, expand_query_range, time_bin_map)
         return partition_id
 
     def get_partition_ids_s(self, geom, start, end) -> list[int]:
@@ -567,8 +586,18 @@ class STIndex:
         env = period.get_partition_env(partition_id)
         return STBound(env, period.period_start, period.period_end)
 
-    def get_time_periods(self, query_range):
-        start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))
-        end_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[1]),
-                                            start_index)
+    def get_time_periods(self, query_range) -> list[TimePeriod]:
+        # start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))
+        # end_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[1]),
+        #                                     start_index)
+        start_index = None
+        end_index = None
+        for i, _ in enumerate(self.time_periods):
+            if _.period_end > query_range[0]:
+                start_index = i
+                break
+        for i, _ in enumerate(self.time_periods[start_index:]):
+            if _.period_end > query_range[1]:
+                end_index = i
+                break
         return self.time_periods[start_index:end_index]
