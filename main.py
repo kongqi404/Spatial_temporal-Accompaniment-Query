@@ -14,7 +14,7 @@ if __name__ == "__main__":
     alpha = 200
     beta = 40
     bin_num = 200
-    delta_milli = 30 * 60 * 1000
+    delta_milli = 30 * 60 *24
     k = 15
     left_path = "./r"
     right_path = "./s"
@@ -36,9 +36,20 @@ if __name__ == "__main__":
     # read_rdd(left_path).repartition(1).saveAsTextFile(store_path)
     extractor_1 = STExtractor()
     extractor_2 = STExtractor()
-    join_time = st_knn_join.join(read_rdd(left_path), read_rdd(right_path), extractor_1, extractor_2)
+    join_rdd = st_knn_join.join(read_rdd(left_path), read_rdd(right_path), extractor_1, extractor_2)
+
+
     # exec join operator
-    spark.sparkContext.parallelize(list(join_time)).repartition(1).saveAsTextFile(store_path)
+    # spark.sparkContext.parallelize(list(join_time)).repartition(1).saveAsTextFile(store_path)
     # save result
+    def res_mapping(line):
+        second = []
+        for i in line[1]:
+            if len(i) > 0:
+                second.append(i)
+                return line[0], second
+        return None
+
+    join_rdd.map(res_mapping).filter(lambda x:x is not None).repartition(1).saveAsTextFile(store_path)
     spark.stop()
     # end spark

@@ -11,7 +11,7 @@ def is_intersects(range1, range2):
 
 def time_refer_point(range1, range2):
     if is_intersects(range1, range2):
-        if range1[0].before(range2[0]):
+        if range1[0]<range2[0]:
             return range2[0]
         else:
             return range1[0]

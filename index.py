@@ -3,7 +3,9 @@ import math
 import queue
 
 import shapely.geometry
+from shapely import wkt
 from shapely.geometry import Polygon, Point
+from shapely.geometry.base import BaseGeometry
 
 import all_utils
 import extractor
@@ -27,11 +29,13 @@ class STBoundable:
         return self.envelope
 
     def centre_t(self):
-        return (self.min_time + self.max_time) / 2
+        return (self.get_min_time() + self.get_max_time()) // 2
 
-    # unfinished
     def centre_x(self):
-        return self.envelope
+        return (self.get_bound().bounds[0] + self.get_bound().bounds[2]) / 2
+
+    def centre_y(self):
+        return (self.get_bound().bounds[1] + self.get_bound().bounds[3]) / 2
 
 
 class STRTreeNode(STBoundable):
@@ -39,9 +43,9 @@ class STRTreeNode(STBoundable):
         super().__init__()
         self.level = level
         self.child_boundables = []
-        self.bound = None
-        self.min_time = None
-        self.max_time = None
+        self.bound: Polygon = None
+        self.min_time = 0
+        self.max_time = 0
 
     def get_min_time(self):
         if self.min_time is None:
@@ -77,27 +81,35 @@ class STRTreeNode(STBoundable):
     def get_child_boundables(self):
         return self.child_boundables
 
+    def centre_t(self):
+        return (self.min_time + self.max_time) // 2
+
+    def centre_x(self):
+        return (self.bound.bounds[0] + self.bound.bounds[2]) / 2
+
+    def centre_y(self):
+        return (self.bound.bounds[1] + self.bound.bounds[3]) / 2
+
 
 class STItemBoundable(STBoundable):
-    def __init__(self, item, _extractor: STExtractor):
+    def __init__(self, item):
         super().__init__()
-        self.extractor = _extractor
         self.item = item
 
     def get_bound(self):
-        return all_utils.transfer_bounds_to_box(self.extractor.geom(self.item).bounds)
+        return all_utils.transfer_bounds_to_box(self.item[0].bounds)
 
     def get_item(self):
         return self.item
 
     def get_geom(self):
-        return self.extractor.geom(self.item)
+        return self.item[0]
 
     def get_min_time(self):
-        return self.extractor.start_time(self.item)
+        return self.item[1][0]
 
     def get_max_time(self):
-        return self.extractor.end_time(self.item)
+        return self.item[1][1]
 
 
 class STRTreeIndex:
@@ -111,13 +123,13 @@ class STRTreeIndex:
 
     def insert(self, item):
         self.empty = False
-        self.item_bound_ables.append(STItemBoundable(item, self.extractor))
+        self.item_bound_ables.append(STItemBoundable(item))
 
     def build(self):
         if not self.built:
             self.root = self.create_node(0) if len(self.item_bound_ables) == 0 \
                 else self.create_higher_levels(self.item_bound_ables, -1)
-            self.item_bound_ables = None
+            self.item_bound_ables = []
             self.built = True
 
     def is_empty(self) -> bool:
@@ -127,7 +139,7 @@ class STRTreeIndex:
     def create_node(level: int) -> STRTreeNode:
         return STRTreeNode(level)
 
-    def create_higher_levels(self, boundables: list, level: int) -> STRTreeNode:
+    def create_higher_levels(self, boundables: list[STBoundable], level: int) -> STRTreeNode:
         assert len(boundables) > 0
         parent_boundables = self.create_parent_boundables(boundables, level + 1)
         if len(parent_boundables) == 1:
@@ -135,11 +147,11 @@ class STRTreeIndex:
         else:
             return self.create_higher_levels(parent_boundables, level + 1)
 
-    def create_parent_boundables(self, child_boundables: list, new_level: int) -> list:
+    def create_parent_boundables(self, child_boundables: list[STBoundable], new_level: int) -> list[STBoundable]:
         assert len(child_boundables) > 0
         min_leaf_count = math.ceil(len(child_boundables) / self.node_capacity)
         slice_count = math.ceil(math.pow(min_leaf_count, 1 / 3))
-        time_sort_iter = sorted(child_boundables)  # key is not set!!!!
+        time_sort_iter = sorted(child_boundables, key=lambda x: x.centre_t())
         slice_capacity = math.ceil(len(child_boundables) / slice_count)
         parent_boundables = []
         # their can be refactored !!!
@@ -153,12 +165,13 @@ class STRTreeIndex:
             vertical_slices = self.create_vertical_slices(time_slice, slice_count)
             for i in range(len(vertical_slices)):
                 parent_boundables += self.create_parent_boundable_from_vertical_slice(vertical_slices[i], new_level)
+        return parent_boundables
 
     # this function can be refactored !!!
     @staticmethod
-    def create_vertical_slices(child_boundables, slice_count: int):
+    def create_vertical_slices(child_boundables, slice_count: int) -> list:
         slice_capacity = math.ceil(len(child_boundables) / slice_count)
-        its = sorted(child_boundables)
+        its = sorted(child_boundables, key=lambda x: x.centre_x())
         it = 0
         slices = []
         for _ in range(slice_count):
@@ -169,27 +182,26 @@ class STRTreeIndex:
             slices.append(current_slice)
         return slices
 
-    def create_parent_boundable_from_vertical_slice(self, child_boundables: list, new_level):
+    def create_parent_boundable_from_vertical_slice(self, child_boundables: list, new_level) -> list:
         assert len(child_boundables) > 0
         parent_boundables = [self.create_node(new_level)]
-        sorted_child_boundables = sorted(child_boundables)  # key is not set!!!!
+        sorted_child_boundables = sorted(child_boundables, key=lambda x: x.centre_y())  # key is not set!!!!
         it = 0
         while it < len(sorted_child_boundables):
             if len(parent_boundables[-1]) == self.node_capacity:
                 parent_boundables.append(self.create_node(new_level))
             parent_boundables[-1].add_child_boundable(sorted_child_boundables[it])
+            it += 1
         return parent_boundables
 
-    # unfinished!!!
     def nearest_neighbour(self, query_geom: shapely.geometry.Polygon, query_start, query_end, k, is_valid,
                           max_distance):
         if not self.built:
             self.build()
-        query_extractor = STExtractor()
         distance_lower_bound = max_distance
         node_queue = []
         query_item = (query_geom, query_start, query_end)
-        query_boundable = STItemBoundable()  # unfinished!!!
+        query_boundable = STItemBoundable(query_item)  # unfinished!!!
         heapq.heappush(node_queue, (self.distance(self.root, query_boundable), self.root))
         # node_queue.put((self.root, self.distance(self.root, query_boundable)))  # bug
 
@@ -208,7 +220,7 @@ class STRTreeIndex:
             elif isinstance(nearest_node, STRTreeNode):
                 for child_boundable in nearest_node.get_child_boundables():
                     child = child_boundable
-                    if all_utils.is_intersects((query_start, query_end), (child.get_min_time(), child.get_max_time())):
+                    if all_utils.is_intersects( (query_start, query_end),(child.get_min_time(), child.get_max_time())):
                         dist = self.distance(child, query_boundable)
                         heapq.heappush(node_queue, (dist, child))
 
@@ -259,8 +271,8 @@ class TRCBasedBins:
         self.start_time = None
         self.end_time = None
         self.span_milli = None
-        self.left_max_sums = []
-        self.right_min_sums = []
+        self.left_max_sums = [0]
+        self.right_min_sums = [0]
 
     def build(self, time_ranges: list[(int, int)]):
         self.total = len(time_ranges)
@@ -281,6 +293,8 @@ class TRCBasedBins:
             self.right_min_sums.append(self.right_min_sums[-1] + i)
         for i in max_nums:
             self.left_max_sums.append(self.left_max_sums[-1] + i)
+        self.right_min_sums = self.right_min_sums[1:]
+        self.left_max_sums = self.left_max_sums[1:]
 
     def has_knn(self, query_range) -> bool:
         if query_range[0] > self.end_time or query_range[1] < self.start_time:
@@ -310,7 +324,7 @@ class QuadNode(GlobalNode):
 
     def split(self, samples: list[shapely.geometry.Polygon], samples_queue: list) -> None:
         for index in range(0, 4):
-            assert self.sub_nodes[index] is None
+            assert len(self.sub_nodes) == index
             self.sub_nodes.append(QuadNode(self.create_sub_env(index)))
             sub_env = self.sub_nodes[index].env
             sub_samples = list(filter(lambda x: sub_env.intersects(x), samples))
@@ -349,7 +363,7 @@ class QuadNode(GlobalNode):
                 for sub_node in self.sub_nodes:
                     sub_node.find_intersect_ids(query_env, id_collector)
 
-    def create_sub_env(self, index: int) -> shapely.geometry.Polygon:
+    def create_sub_env(self, index: int) -> Polygon:
         min_x = 0
         max_x = 0
         min_y = 0
@@ -363,6 +377,9 @@ class QuadNode(GlobalNode):
         elif index == 3:
             min_x, max_x, min_y, max_y = self.centre.x, self.env.bounds[2], self.centre.y, self.env.bounds[3]
         return shapely.geometry.box(min_x, min_y, max_x, max_y)
+
+    def __lt__(self, other):
+        return len(self.sub_nodes) < len(other.sub_nodes)
 
 
 class GlobalQuad:
@@ -403,21 +420,21 @@ class GlobalQuad:
             self.leaf_nodes[i].set_partition_id(base_id + i)
         return base_id + len(self.leaf_nodes)
 
-    def get_leaf_env(self, index: int) -> shapely.geometry.Polygon:
+    def get_leaf_env(self, index: int) -> Polygon:
         return self.leaf_nodes[index].env
 
-    def get_partition_id(self, query_geom: Polygon, query_range: tuple, time_bin_map: dict[int, TRCBasedBins]):
+    def get_partition_id(self, query_geom: Polygon, query_range: tuple, time_bin_map: dict[int, TRCBasedBins]) -> int:
         filter_func = lambda leaf_node: \
             time_bin_map.get(leaf_node.get_partition_id).has_knn(query_range) \
                 if time_bin_map.get(leaf_node.get_partition_id) is not None \
                 else False
-        self.get_partition_id_func(query_geom, filter_func)
+        return self.get_partition_id_func(query_geom, filter_func)
 
     def get_partition_id_func(self, query_geom: Polygon, filter_func) -> int:
-        query_centre = query_geom.centroid()
+        query_centre = query_geom.centroid
         return self.find_nearest_id(query_centre, filter_func)
 
-    def get_partition_ids(self, query_geom: Polygon, distance) -> list[int]:
+    def get_partition_ids(self, query_geom: Polygon, distance=0.0) -> list[int]:
         geom_env = all_utils.transfer_bounds_to_box(all_utils.expand_envelop_by_dis(query_geom.bounds,
                                                                                     distance)) if distance > 0 else all_utils.transfer_bounds_to_box(
             query_geom.bounds)
@@ -456,7 +473,7 @@ class TimePeriod:
     lower_partition_id: int = None
     upper_partition_id: int = None
 
-    def build_spatial_index(self, samples, global_bound, sample_rate, beta, k, is_quad_index):
+    def build_spatial_index(self, samples: list, global_bound: Polygon, sample_rate, beta, k, is_quad_index):
         if is_quad_index:
             self.spatial_index = GlobalQuad(global_bound)
             self.spatial_index.build(samples, sample_rate, beta, k)
@@ -464,15 +481,15 @@ class TimePeriod:
         #     self.spatial_index = GlobalRTree(max(10, len(samples) // beta))
         #     self.spatial_index.build(samples)
 
-    def assign_partition_id(self, lower_id):
+    def assign_partition_id(self, lower_id) -> int:
         self.lower_partition_id = lower_id
         self.upper_partition_id = self.spatial_index.assign_partition_id(lower_id)
         return self.upper_partition_id
 
-    def contains_partition(self, point_id):
+    def contains_partition(self, point_id) -> bool:
         return self.lower_partition_id <= point_id < self.upper_partition_id
 
-    def get_partition_env(self, partition_id: int):
+    def get_partition_env(self, partition_id: int) -> Polygon:
         return self.spatial_index.get_leaf_env(partition_id - self.lower_partition_id)
 
     def get_spatial_index(self) -> GlobalQuad:
@@ -511,15 +528,15 @@ class STIndex:
     time_periods: list[TimePeriod] = []
     is_updated = False
 
-    def is_update(self):
+    def is_update(self) -> bool:
         return self.is_updated
 
-    def update_bound(self, leaf_node_map: dict):
+    def update_bound(self, leaf_node_map: dict[int, Polygon]):
         if not self.is_updated:
             for period in self.time_periods:
                 period.get_spatial_index.update_bound(leaf_node_map)
 
-    def build(self, samples: list[STBound], sample_rate):
+    def build(self, samples: list[STBound], sample_rate) -> int:
         min_time, max_time = self.global_range
         sorted_samples = sorted(samples, key=lambda x: x.start_time)
         avg = sum(map(lambda x: x.end_time - x.start_time, sorted_samples)) / len(samples)
@@ -528,7 +545,7 @@ class STIndex:
 
         time_span = 0
         sweep_line = period_start = min_time
-        sample_holder = []
+        sample_holder: list[STBound] = []
         for sample in sorted_samples:
             time_span += sample.start_time - sweep_line
             sweep_line = sample.start_time
@@ -536,11 +553,12 @@ class STIndex:
             if time_span >= min_span_milli and len(sample_holder) >= min_sample_num:
                 density = len(sample_holder) / time_span
                 period = TimePeriod(period_start, sweep_line, density)
-                period.build_spatial_index(map(lambda x: x.env, sample_holder), self.global_env, sample_rate, self.beta,
+                period.build_spatial_index(list(map(lambda x: x.env, sample_holder)), self.global_env, sample_rate,
+                                           self.beta,
                                            self.k, self.is_quad_index)
                 self.time_periods.append(period)
                 period_start = sweep_line
-                sample_holder = filter(lambda x: x.end_time > sweep_line, sample_holder)
+                sample_holder = list(filter(lambda x: x.end_time > sweep_line, sample_holder))
                 time_span = 0
 
         time_span += max_time - sweep_line
@@ -568,21 +586,21 @@ class STIndex:
         result = []
         if self.is_quad_index:
             for period in self.get_time_periods(query_range):
-                result += period.get_spatial_index.get_partition_ids(geom)
-        else:
-            for period in self.get_time_periods(query_range):
-                result.append(period.get_spatial_index.get_partition_id(geom))
+                result += period.get_spatial_index().get_partition_ids(geom)
         return result
+        # else:
+        #     for period in self.get_time_periods(query_range):
+        #         result.append(period.get_spatial_index().get_partition_id(geom))
 
     def get_partition_ids_r_second(self, geom, start, end, distance) -> list[int]:
         expand_query_range = all_utils.expand_time_range((start, end), self.delta_milli)
         result = []
         for period in self.get_time_periods(expand_query_range):
-            result += period.get_spatial_index.get_partition_ids(geom)
+            result += period.get_spatial_index().get_partition_ids(geom, distance)
         return result
 
-    def get_partition(self, partition_id: int):
-        period: TimePeriod = filter(lambda x: x.contains_partition(partition_id), self.time_periods)[0]
+    def get_partition(self, partition_id: int) -> STBound:
+        period: TimePeriod = list(filter(lambda x: x.contains_partition(partition_id), self.time_periods))[0]
         env = period.get_partition_env(partition_id)
         return STBound(env, period.period_start, period.period_end)
 
@@ -590,8 +608,8 @@ class STIndex:
         # start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))
         # end_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[1]),
         #                                     start_index)
-        start_index = None
-        end_index = None
+        start_index = -1
+        end_index = -1
         for i, _ in enumerate(self.time_periods):
             if _.period_end > query_range[0]:
                 start_index = i
@@ -600,4 +618,54 @@ class STIndex:
             if _.period_end > query_range[1]:
                 end_index = i
                 break
+        end_index = len(self.time_periods) if end_index == -1 else end_index + 1
         return self.time_periods[start_index:end_index]
+
+
+class PartitionDataSetS:
+    def __init__(self, time_periods: list[TimePeriod]):
+        self.time_periods = time_periods
+
+    def get_partition_ids_s(self, geom, start, end) -> list[int]:
+        query_range = (start, end)
+        result = []
+        for period in self.get_time_periods(query_range):
+            result += period.get_spatial_index().get_partition_ids(geom)
+        return result
+
+    def get_time_periods(self, query_range) -> list[TimePeriod]:
+        # start_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[0]))
+        # end_index = self.time_periods.index(next(p for p in self.time_periods if p.period_end > query_range[1]),
+        #                                     start_index)
+        start_index = -1
+        end_index = -1
+        for i, _ in enumerate(self.time_periods):
+            if _.period_end > query_range[0]:
+                start_index = i
+                break
+        for i, _ in enumerate(self.time_periods[start_index:]):
+            if _.period_end > query_range[1]:
+                end_index = start_index+i
+                break
+        end_index = len(self.time_periods) if end_index == -1 else end_index + 1
+        return self.time_periods[start_index:end_index]
+
+    def get_partition_id(self, query_geom, query_range, time_bin_map) -> int:
+        expand_query_range = all_utils.expand_time_range(query_range, 30 * 60)
+        partition_id = -1
+        for period in self.get_time_periods(expand_query_range):
+            if partition_id == -1:
+                partition_id = period.get_spatial_index().get_partition_id(query_geom, expand_query_range, time_bin_map)
+        return partition_id
+
+    def get_partition_ids_r_second(self, geom, start, end, distance) -> list[int]:
+        expand_query_range = all_utils.expand_time_range((start, end), 30 * 60)
+        result = []
+        for period in self.get_time_periods(expand_query_range):
+            result += period.get_spatial_index().get_partition_ids(geom, distance)
+        return result
+
+    def get_partition(self, partition_id: int) -> STBound:
+        period: TimePeriod = list(filter(lambda x: x.contains_partition(partition_id), self.time_periods))[0]
+        env = period.get_partition_env(partition_id)
+        return STBound(env, period.period_start, period.period_end)

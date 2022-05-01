@@ -1,3 +1,4 @@
+import pickle
 import time
 import unittest
 from math import sqrt, log
@@ -8,7 +9,7 @@ from pyspark import StorageLevel, RDD
 from shapely.geometry import Polygon
 
 import extractor
-from index import STIndex, STBound, TRCBasedBins, STRtree
+from index import STIndex, STBound, TRCBasedBins, STRtree, TimePeriod, PartitionDataSetS
 from partition import do_statistic
 import all_utils
 
@@ -46,32 +47,32 @@ class LocalJoin:
 
         def mapping(row_with_id: RowWithId):
             if row_with_id.id > 0:
-                left_geom = self.left_extractor.geom(row_with_id.row)
-                left_start_time = self.left_extractor.start_time(row_with_id.row)
-                left_end_time = self.left_extractor.end_time(row_with_id.row)
+                left_geom = row_with_id.row[0]
+                left_start_time = row_with_id.row[1][0]
+                left_end_time = row_with_id.row[1][1]
                 left_time_range = all_utils.expand_time_range((left_start_time, left_end_time), self.delta_milli)
                 is_valid = lambda right_row: all_utils.is_intersects(left_time_range, (
-                    self.right_extractor.start_time(right_row), self.right_extractor.end_time(right_row)))
+                    right_row[1][0], right_row[1][1]))
                 candidate_with_dist = local_index.nearest_neighbour(left_geom, left_time_range[0], left_time_range[1],
                                                                     self.k, is_valid)
-                assert len(candidate_with_dist) == self.k
+
                 # left_geom_env = all_utils.transfer_bounds_to_box(left_geom.bounds)
-                max_dist = candidate_with_dist[-1][1]
+                max_dist = candidate_with_dist[-1][1]  if len(candidate_with_dist) == self.k else 1e10
                 left_geom_env = all_utils.transfer_bounds_to_box(
                     all_utils.expand_envelop_by_dis(left_geom.bounds, max_dist))
-                duplicated_candidates = filter(lambda right_row:
+                duplicated_candidates = list(filter(lambda right_row:
                                                self.is_reverse(partition_bound, left_geom_env,
                                                                all_utils.transfer_bounds_to_box(
-                                                                   self.right_extractor.geom(right_row[0]).bounds),
-                                                               left_time_range,
-                                                               (self.right_extractor.start_time(right_row[0]),
-                                                                self.right_extractor.end_time(right_row[0]))),
-                                               candidate_with_dist)
+                                                                   right_row[0][0].bounds),
+                                                               left_time_range, (
+                                                                   right_row[0][1][0],
+                                                                   right_row[0][1][1])),
+                                               candidate_with_dist))
                 return row_with_id, ApproximateContainer(duplicated_candidates, partition_id, max_dist)
             else:
                 return row_with_id, ApproximateContainer([], partition_id, 1e10)
 
-        return map(mapping, left_rows)
+        return list(map(mapping, left_rows))
 
     def second_round_join(self, left_rows: list[(RowWithId, ApproximateContainer)], local_index: STRtree,
                           partition_bound: STBound):
@@ -82,37 +83,36 @@ class LocalJoin:
             if container.partition_id != -1:
                 return row_with_id, container.duplicate_knn
             else:
-                left_geom = self.left_extractor.geom(row_with_id.row)
-                left_start_time = self.left_extractor.start_time(row_with_id.row)
-                left_end_time = self.left_extractor.end_time(row_with_id.row)
+                left_geom = row_with_id.row[0]
+                left_start_time = row_with_id.row[1][0]
+                left_end_time = row_with_id.row[1][1]
                 left_geom_env = all_utils.transfer_bounds_to_box(
                     all_utils.expand_envelop_by_dis(left_geom.bounds, container.expand_dist))
                 left_time_range = all_utils.expand_time_range((left_start_time, left_end_time), self.delta_milli)
                 is_valid = lambda right_row: \
                     all_utils.is_intersects(left_time_range,
-                                            (self.right_extractor.start_time(right_row)
-                                             , self.right_extractor.end_time(right_row)))
+                                            (right_row[1][0]
+                                             , right_row[1][1]))
                 candidates_with_dist = local_index.nearest_neighbour(left_geom, left_time_range[0], left_time_range[1],
                                                                      self.k, is_valid, container.expand_dist)
-                duplicated_candidates = filter(lambda right_row:
-                                               self.is_reverse(partition_bound,
-                                                               left_geom_env,
-                                                               all_utils.transfer_bounds_to_box(
-                                                                   self.right_extractor.geom(right_row[0]).bounds),
-                                                               left_time_range,
-                                                               (self.right_extractor.start_time(right_row[0]),
-                                                                self.right_extractor.end_time(right_row[0]))),
-                                               candidates_with_dist)
+                duplicated_candidates = list(filter(lambda right_row:
+                                                    self.is_reverse(partition_bound,
+                                                                    left_geom_env,
+                                                                    all_utils.transfer_bounds_to_box(
+                                                                        right_row[0][0].bounds),
+                                                                    left_time_range,
+                                                                    (right_row[0][1][0],
+                                                                     right_row[0][1][1])),
+                                                    candidates_with_dist))
             return row_with_id, duplicated_candidates
 
-        return map(mapping, left_rows)
+        return list(map(lambda x: mapping(x[0], x[1]), left_rows))
 
     @staticmethod
     def is_reverse(partition_bound: STBound, left_geom_env: Polygon,
                    right_geom_env: Polygon, left_time_range: tuple, right_time_range: tuple) -> bool:
         time_refer_point = all_utils.time_refer_point(left_time_range, right_time_range)
-        is_time_satisfied = time_refer_point is not None and partition_bound.contains_range(time_refer_point)
-        if time_refer_point is not None and partition_bound.contains_range(time_refer_point):
+        if time_refer_point is not None and partition_bound.contains_point(time_refer_point):
             intersection = left_geom_env.intersection(right_geom_env).bounds
             return intersection[3] - intersection[1] >= 0 and partition_bound.contains_points(intersection[0],
                                                                                               intersection[1])
@@ -157,7 +157,7 @@ def sample(rdd: pyspark.RDD, _extractor: extractor.STExtractor, total_num, alpha
 
     fraction = compute_fraction_for_sample_size(sample_size, total_num, False)
     samples = rdd.sample(withReplacement=False, fraction=fraction) \
-        .map(lambda row: STBound(_extractor.geom(row).boundary, _extractor.start_time(row), _extractor.end_time(row))) \
+        .map(lambda row: STBound(all_utils.transfer_bounds_to_box(row[0].bounds), row[1][0], row[1][1])) \
         .collect()
     return samples, fraction
 
@@ -193,7 +193,6 @@ class STKnnJoin:
         original_time = time.time()  # current time
         spark = left_rdd.context
         left_rdd.persist(StorageLevel.MEMORY_AND_DISK)
-        print(left_rdd.collect()[0][0])
         left_global_info = do_statistic(left_rdd)
         left_time_range = all_utils.expand_time_range(left_global_info.get_time_range(), delta_milli=self.delta_milli)
 
@@ -210,31 +209,30 @@ class STKnnJoin:
         samples, sample_rate = sample(validate_right_rdd, right_extractor, right_global_info.get_count(), self.alpha,
                                       self.beta)
         partition_num = global_index.build(samples, sample_rate)
+        # print(global_index.time_periods[0].period_start)
+        part_s = PartitionDataSetS(global_index.time_periods)
 
-        # unused
-        # partitioner = get_partitioner(partition_num)
+        # bc_global_index = spark.broadcast(global_index)
+        bc_part_s = spark.broadcast(part_s)
 
-        bc_global_index = spark.broadcast(global_index)
-
-        # repartition right rdd and insert global index
         def f_mp(iterator):
             yield pyspark.TaskContext.get().partitionId(), list(iterator)
 
-        # partitioned_right_rdd = validate_right_rdd \
-        #     .flatMap(lambda right_row: list(map(lambda x: (x, right_row),
-        #                                         bc_global_index
-        #                                         .value
-        #                                         .get_partition_ids_s(right_row[0], right_row[1][0], right_row[1][1]))))\
-        #     .partitionBy(partition_num) \
-        #     .map(lambda x: x[1]) \
-        #     .mapPartitions(f_mp) \
-        #     .filter(lambda x: len(x[1]) > 0)
-        # print(partitioned_right_rdd.collect())
-        print(validate_right_rdd.flatMap(lambda right_row: list(map(lambda x: (x, right_row),
-                                                                    bc_global_index
-                                                                    .value
-                                                                    .get_partition_ids_s(right_row[0], right_row[1][0],
-                                                                                         right_row[1][1])))).collect())
+        # partitioned_right_rdd = partitioned_right_rdd.map(lambda x: x[1]).mapPartitions(f_mp).filter(lambda x:len(x[1])>0)
+        partitioned_right_rdd = validate_right_rdd \
+            .flatMap(
+            lambda right_row: map(lambda x: (x, right_row),
+                                  bc_part_s.value.get_partition_ids_s(right_row[0], right_row[1][0], right_row[1][1]))) \
+            .partitionBy(partition_num) \
+            .map(lambda x: x[1]) \
+            .mapPartitions(f_mp) \
+            .filter(lambda x: len(x[1]) > 0)
+        # print(list(filter(lambda x:x[0],partitioned_right_rdd.collect())))
+        # print("--------------------------------------------------------------------------------------")
+
+
+        # print(validate_right_rdd.flatMap(lambda right_row_flatmap: bc_global_index.value.get_partition_ids_s(right_row_flatmap[0], right_row_flatmap[1][0], right_row_flatmap[1][1])).collect())
+        # print(validate_right_rdd.flatMap(v_f_map).collect())
         partition_bound_accum = spark.accumulator((0, shapely.geometry.Polygon())) if not self.is_quad_index else None
 
         def time_map(partition_id: int, right_rows):
@@ -248,41 +246,55 @@ class STKnnJoin:
             time_bin.build(time_ranges)
             return partition_id, time_bin
 
-        time_bin_map = dict(partitioned_right_rdd.map(time_map).collect())
+        time_bin_map = dict(partitioned_right_rdd.map(lambda x: time_map(x[0], x[1])).collect())
 
         bc_time_bin_map = spark.broadcast(time_bin_map)
-        if not self.is_quad_index:
-            global_index.update_bound(partition_bound_accum.value.__dict__)
-            bc_global_index = spark.broadcast(global_index)
+
+        # if not self.is_quad_index:
+        #     global_index.update_bound(partition_bound_accum.value.__dict__)
+        #     bc_global_index = spark.broadcast(global_index)
 
         def indexed_right(partition_id, right_rows):
             local_index = STRtree(right_extractor, self.k, self.bin_num)
             local_index.build(right_rows)
             return partition_id, local_index
 
+        # for x in partitioned_right_rdd.collect():
+        #     print(indexed_right(x[0],x[1]))
         indexed_right_rdd = partitioned_right_rdd \
-            .map(indexed_right) \
+            .map(lambda x: indexed_right(x[0], x[1])) \
             .persist(StorageLevel.MEMORY_AND_DISK)
-
+        # print(indexed_right_rdd.collect()[0][0])
+        # print("----------------------------------------------------------")
         local_join = LocalJoin(left_extractor, right_extractor, self.delta_milli, self.k)
 
         def left_p_r(left_row, i_d):
-            geom = left_extractor.geom(left_row)
-            start_time = left_extractor.start_time(left_row)
-            end_time = left_extractor.end_time(left_row)
-            index = bc_global_index.value
-            if not self.is_quad_index:
-                assert index.is_updated
+            geom = left_row[0]
+            start_time = left_row[1][0]
+            end_time = left_row[1][1]
+            index = bc_part_s.value
+            # if not self.is_quad_index:
+            #     assert index.is_updated
             partition_id = index.get_partition_id(geom, (start_time, end_time), bc_time_bin_map.value)
             if partition_id == -1:
-                row_with_id = RowWithId(-i_d, left_row)
-                temp_partition_id = index.get_partition_ids_r_second(geom, start_time, end_time, 1e10)
-                return iter((temp_partition_id, row_with_id))
+                row_with_id = RowWithId(i_d, left_row)
+                temp_partition_id = index.get_partition_ids_r_second(geom, start_time, end_time, 1e10)[0]
+                yield temp_partition_id, row_with_id
             else:
-                return iter((partition_id, RowWithId(i_d, left_row)))
+                yield partition_id, RowWithId(-i_d, left_row)
 
-        left_partition_rdd: pyspark.RDD = left_rdd.zipWithUniqueId().flatMap(left_p_r).partitionBy(partition_num).map(
+        # left_partition_rdd: RDD = left_rdd.zipWithUniqueId()
+        # for x in left_partition_rdd.collect():
+        #     print(list(left_p_r(x[0],x[1])))
+        # left_partition_rdd = spark.parallelize(
+        #     [i for i in left_p_r(x[0], x[1])] for x in left_partition_rdd.collect()).flatMap(lambda x: x).partitionBy(
+        #     partition_num, lambda x: int(x)).map(lambda x: x[1])
+        left_partition_rdd: pyspark.RDD = left_rdd.zipWithUniqueId().filter(lambda x: x is not None).flatMap(
+            lambda x: left_p_r(x[0], x[1])).partitionBy(partition_num, lambda x: int(x)).map(
             lambda x: x[1])
+
+        # print(left_partition_rdd.collect())
+        # print("-------------------------------------------------------------------------------")
 
         def zip_partitions(rdd1, rdd2, func):
             rdd1_num_partitions = rdd1.getNumPartitions()
@@ -291,48 +303,63 @@ class STKnnJoin:
 
             paired_rdd1 = rdd1.mapPartitionsWithIndex(lambda index, it: ((index, list(it)),))
             paired_rdd2 = rdd2.mapPartitionsWithIndex(lambda index, it: ((index, list(it)),))
-
-            zipped_rdd = paired_rdd1.join(paired_rdd2, numPartitions=rdd1_num_partitions) \
-                .flatMap(lambda x: func(x[1][0], x[1][1]))
-
+            # print(paired_rdd2.collect())
+            zipped_rdd = paired_rdd1.join(paired_rdd2, numPartitions=rdd1_num_partitions)\
+                .flatMap(lambda x: func(x[1][0], x[1][1],x[0]))
+            # print(zipped_rdd.collect())
             return zipped_rdd
 
-        def zip_partitions_func1(left_rows: iter, right_index: iter):
+        def zip_partitions_func1(left_rows: iter, right_index: iter,i_d):
             for i in right_index:
                 partition_id, local_index = i
-                index = bc_global_index.value
-                if not self.is_quad_index:
-                    assert index.is_updated
+                partition_id=i_d
+                index = part_s
+                # if not self.is_quad_index:
+                #     assert index.is_updated
+                assert partition_id<partition_num
+                # print(partition_id)
+                # print(index.get_partition(partition_id))
                 yield local_join.first_round_join(left_rows, local_index, index.get_partition(partition_id),
                                                   partition_id)
-
+        # print("------------------------------------------------------------------------------------------")
+        #test
+        # print(list(zip_partitions_func1(left_partition_rdd.collect(),indexed_right_rdd.collect())))
         def l_r_r_func(row_with_id: RowWithId, container: ApproximateContainer):
             left_geom = row_with_id.row[0]
             start_time = row_with_id.row[1][0]
             end_time = row_with_id.row[1][1]
-            index = bc_global_index.value
-            if not self.is_quad_index:
-                assert index.is_updated
+            index = bc_part_s.value
+            # if not self.is_quad_index:
+            #     assert index.is_updated
             partition_ids = index.get_partition_ids_r_second(left_geom, start_time, end_time, container.expand_dist)
             return map(lambda partition_id: (partition_id, (row_with_id, container)) if
             row_with_id.id > 0 and partition_id == container.partition_id else (
                 partition_id, (row_with_id, ApproximateContainer([], -1, container.expand_dist))), partition_ids)
 
-        left_repartition_rdd: RDD = zip_partitions(left_partition_rdd, indexed_right_rdd, zip_partitions_func1) \
-            .flatMap(l_r_r_func).partitionBy(partition_num).map(lambda x: x[1])
-
-        def zip_partitions_func2(left_rows: iter, right_index: iter) -> iter:
+        left_repartition_rdd: RDD = zip_partitions(left_partition_rdd, indexed_right_rdd, zip_partitions_func1).filter(
+            lambda x: x is not None).flatMap(lambda x: x)\
+            .flatMap(lambda x: l_r_r_func(x[0], x[1])) \
+            .partitionBy(partition_num, lambda x: int(x)).map(lambda x: x[1])
+        # print(left_repartition_rdd.collect())
+        # print("-----------------------------------------------------------------------")
+        def zip_partitions_func2(left_rows: iter, right_index: iter,i_d) -> iter:
             for i in right_index:
                 partition_id, local_index = i
+                partition_id=i_d
                 yield local_join.second_round_join(left_rows, local_index,
-                                                   bc_global_index.value.get_partition(partition_id))
+                                                   bc_part_s.value.get_partition(partition_id))
 
         def second_local_join_map(row_with_id: RowWithId, candidate_iter):
             return row_with_id.row, sorted(candidate_iter, key=candidate_iter[1])[:self.k]
 
-        res_rdd: RDD = zip_partitions(left_repartition_rdd, indexed_right_rdd, zip_partitions_func2).groupByKey(). \
-            map(lambda row_with_id, candidate_iter: (
-            row_with_id.row, sorted(candidate_iter, key=candidate_iter[1])[:self.k]))
+        res_rdd: RDD = zip_partitions(left_repartition_rdd, indexed_right_rdd, zip_partitions_func2) \
+            .filter(lambda x: x is not None).flatMap(lambda x: x) \
+            .groupByKey() \
+            .map(lambda x: (
+            x[0].row, list(x[1])))
+        # print(res_rdd.collect())
         print(res_rdd.count())
+
         total_time = time.time() - original_time
         print(f"total time: {total_time} seconds")
+        return res_rdd
