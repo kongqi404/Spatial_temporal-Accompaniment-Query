@@ -47,9 +47,10 @@ if __name__ == "__main__":
         for i in line[1]:
             if len(i) > 0:
                 second.append(i)
-                return line[0], second
-        return None
+        return None if len(second)==0 else (line[0],second)
 
-    join_rdd.map(res_mapping).filter(lambda x:x is not None).repartition(1).saveAsTextFile(store_path)
+    res=join_rdd.map(res_mapping).filter(lambda x:x is not None)
+    print(res.count())
+    res.saveAsTextFile(store_path)
     spark.stop()
     # end spark

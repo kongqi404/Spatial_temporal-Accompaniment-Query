@@ -358,7 +358,7 @@ class STKnnJoin:
             .map(lambda x: (
             x[0].row, list(x[1])))
         # print(res_rdd.collect())
-        print(res_rdd.count())
+        # print(res_rdd.count())
 
         total_time = time.time() - original_time
         print(f"total time: {total_time} seconds")
