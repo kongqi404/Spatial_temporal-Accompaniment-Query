@@ -24,7 +24,7 @@ if __name__ == "__main__":
 
     def mapping(line):
         sp = line.split("\t")
-        return (all_utils.transfer_bounds_to_box(wkt.loads(sp[0]).bounds),
+        return (wkt.loads(sp[0]),
                 (int(time.mktime(time.strptime(sp[1], "%Y-%m-%d %H:%M:%S"))),
                  int(time.mktime(time.strptime(sp[2], "%Y-%m-%d %H:%M:%S")))))
 
@@ -36,6 +36,7 @@ if __name__ == "__main__":
     # read_rdd(left_path).repartition(1).saveAsTextFile(store_path)
     extractor_1 = STExtractor()
     extractor_2 = STExtractor()
+    current_time = time.time()
     join_rdd = st_knn_join.join(read_rdd(left_path), read_rdd(right_path), extractor_1, extractor_2)
 
 
@@ -46,11 +47,12 @@ if __name__ == "__main__":
         second = []
         for i in line[1]:
             if len(i) > 0:
-                second.append(i)
-        return None if len(second)==0 else (line[0],second)
+                second.append((i[0][0][0].wkt,i[0][0][1],i[0][1]))
+        return None if len(second)==0 else ((line[0][0].wkt,line[0][1]),second)
 
     res=join_rdd.map(res_mapping).filter(lambda x:x is not None)
     print(res.count())
-    res.saveAsTextFile(store_path)
+    print(f"all time :{time.time()-current_time}")
+    res.repartition(1).saveAsTextFile(store_path)
     spark.stop()
     # end spark
