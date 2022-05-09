@@ -1,6 +1,4 @@
-import pickle
-import time
-import unittest
+
 from math import sqrt, log
 import pyspark.java_gateway
 import pyspark.rdd
@@ -190,7 +188,6 @@ class STKnnJoin:
         :param right_extractor:
         :return:
         """
-        original_time = time.time()  # current time
         spark = left_rdd.context
         left_rdd.persist(StorageLevel.MEMORY_AND_DISK)
         left_global_info = do_statistic(left_rdd)
@@ -340,8 +337,6 @@ class STKnnJoin:
             lambda x: x is not None).flatMap(lambda x: x)\
             .flatMap(lambda x: l_r_r_func(x[0], x[1])) \
             .partitionBy(partition_num, lambda x: int(x)).map(lambda x: x[1])
-        # print(left_repartition_rdd.collect())
-        # print("-----------------------------------------------------------------------")
         def zip_partitions_func2(left_rows: iter, right_index: iter,i_d) -> iter:
             for i in right_index:
                 partition_id, local_index = i
@@ -357,9 +352,4 @@ class STKnnJoin:
             .groupByKey() \
             .map(lambda x: (
             x[0].row, list(x[1])))
-        # print(res_rdd.collect())
-        # print(res_rdd.count())
-
-        total_time = time.time() - original_time
-        print(f"total time: {total_time} seconds")
         return res_rdd
