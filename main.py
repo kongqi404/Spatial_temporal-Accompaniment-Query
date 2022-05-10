@@ -6,7 +6,6 @@ from shapely import wkt
 
 import all_utils
 from ST_knn import STKnnJoin
-from extractor import STExtractor
 
 if __name__ == "__main__":
     spark = pyspark.sql.SparkSession.builder.appName("st_knn").getOrCreate()
@@ -14,11 +13,11 @@ if __name__ == "__main__":
     alpha = 200
     beta = 40
     bin_num = 200
-    delta_milli = 30 * 60 *24
+    delta_milli = 60 * 60 *24
     k = 15
-    left_path = "./r"
-    right_path = "./s"
-    store_path = "./res"
+    left_path = "hdfs://127.0.0.1:9000/user/hadoop/r"
+    right_path = "hdfs://127.0.0.1:9000/user/hadoop/s"
+    store_path = "hdfs://127.0.0.1:9000/user/hadoop/res"
     st_knn_join = STKnnJoin(delta_milli, k, alpha, beta, bin_num)  # instance a class
 
 
@@ -34,10 +33,8 @@ if __name__ == "__main__":
 
 
     # read_rdd(left_path).repartition(1).saveAsTextFile(store_path)
-    extractor_1 = STExtractor()
-    extractor_2 = STExtractor()
     current_time = time.time()
-    join_rdd = st_knn_join.join(read_rdd(left_path), read_rdd(right_path), extractor_1, extractor_2)
+    join_rdd = st_knn_join.join(read_rdd(left_path), read_rdd(right_path))
 
 
     # exec join operator

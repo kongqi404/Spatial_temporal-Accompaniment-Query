@@ -8,8 +8,6 @@ from shapely.geometry import Polygon, Point
 from shapely.geometry.base import BaseGeometry
 
 import all_utils
-import extractor
-from extractor import STExtractor
 
 
 # unfinished 4/20
@@ -113,9 +111,8 @@ class STItemBoundable(STBoundable):
 
 
 class STRTreeIndex:
-    def __init__(self, _extractor: STExtractor, node_capacity=10):
+    def __init__(self, node_capacity=10):
         self.node_capacity = node_capacity
-        self.extractor = _extractor
         self.root = None
         self.item_bound_ables = []
         self.empty = True
@@ -201,7 +198,7 @@ class STRTreeIndex:
         distance_lower_bound = max_distance
         node_queue = []
         query_item = (query_geom, query_start, query_end)
-        query_boundable = STItemBoundable(query_item)  # unfinished!!!
+        query_boundable = STItemBoundable(query_item)  
         heapq.heappush(node_queue, (self.distance(self.root, query_boundable), self.root))
         # node_queue.put((self.root, self.distance(self.root, query_boundable)))  # bug
 
@@ -241,13 +238,12 @@ class STRTreeIndex:
 
 
 class STRtree:
-    def __init__(self, _extractor: STExtractor, k: int, bin_num: int):
+    def __init__(self, k: int, bin_num: int):
         self.bin_num = bin_num
         self.k = k
-        self.extractor = _extractor
         self.is_built = False
         self.empty = True
-        self.rtree = STRTreeIndex(self.extractor)
+        self.rtree = STRTreeIndex()
 
     def build(self, rows: list):
         for row in rows:

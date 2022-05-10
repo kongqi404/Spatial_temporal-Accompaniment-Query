@@ -6,7 +6,6 @@ import shapely.geometry
 from pyspark import StorageLevel, RDD
 from shapely.geometry import Polygon
 
-import extractor
 from index import STIndex, STBound, TRCBasedBins, STRtree, TimePeriod, PartitionDataSetS
 from partition import do_statistic
 import all_utils
@@ -32,11 +31,9 @@ class ApproximateContainer:
 
 
 class LocalJoin:
-    def __init__(self, left_extractor: extractor.STExtractor, right_extractor: extractor.STExtractor, delta_milli, k):
+    def __init__(self, delta_milli, k):
         self.k = k
         self.delta_milli = delta_milli
-        self.right_extractor = right_extractor
-        self.left_extractor = left_extractor
 
     def first_round_join(self, left_rows: list[RowWithId], local_index: STRtree, partition_bound: STBound,
                          partition_id: int):
@@ -123,7 +120,7 @@ class LocalJoin:
 #     return pyspark.rdd.Partitioner(partition_num, lambda x: int(x))
 
 
-def sample(rdd: pyspark.RDD, _extractor: extractor.STExtractor, total_num, alpha, beta):
+def sample(rdd: pyspark.RDD, total_num, alpha, beta):
     num_partitions = alpha * beta
     sample_size = total_num if total_num < 1000 else max(num_partitions * 2, total_num // 100)
 
@@ -178,14 +175,11 @@ class STKnnJoin:
         self.bin_num = bin_num
         self.is_quad_index = is_quad_index
 
-    def join(self, left_rdd: RDD, right_rdd: RDD, left_extractor: extractor.STExtractor,
-             right_extractor: extractor.STExtractor):
+    def join(self, left_rdd: RDD, right_rdd: RDD):
         """
 
         :param left_rdd:
         :param right_rdd:
-        :param left_extractor:
-        :param right_extractor:
         :return:
         """
         spark = left_rdd.context
@@ -203,7 +197,7 @@ class STKnnJoin:
         global_range = right_global_info.get_time_range()
         global_index = STIndex(global_bound, global_range, self.alpha, self.beta, self.delta_milli,
                                self.k, self.is_quad_index)
-        samples, sample_rate = sample(validate_right_rdd, right_extractor, right_global_info.get_count(), self.alpha,
+        samples, sample_rate = sample(validate_right_rdd, right_global_info.get_count(), self.alpha,
                                       self.beta)
         partition_num = global_index.build(samples, sample_rate)
         # print(global_index.time_periods[0].period_start)
@@ -238,7 +232,7 @@ class STKnnJoin:
             time_ranges = list(map(lambda x: (x[1][0], x[1][1]), right_rows))
             if not self.is_quad_index:
                 for row in right_rows:
-                    bound = all_utils.transfer_bounds_to_box(bound.union(right_extractor.geom(row)).bounds)
+                    bound = all_utils.transfer_bounds_to_box(bound.union(row[0]).bounds)
                 partition_bound_accum.add((partition_id, bound))
             time_bin.build(time_ranges)
             return partition_id, time_bin
@@ -252,7 +246,7 @@ class STKnnJoin:
         #     bc_global_index = spark.broadcast(global_index)
 
         def indexed_right(partition_id, right_rows):
-            local_index = STRtree(right_extractor, self.k, self.bin_num)
+            local_index = STRtree( self.k, self.bin_num)
             local_index.build(right_rows)
             return partition_id, local_index
 
@@ -263,7 +257,7 @@ class STKnnJoin:
             .persist(StorageLevel.MEMORY_AND_DISK)
         # print(indexed_right_rdd.collect()[0][0])
         # print("----------------------------------------------------------")
-        local_join = LocalJoin(left_extractor, right_extractor, self.delta_milli, self.k)
+        local_join = LocalJoin( self.delta_milli, self.k)
 
         def left_p_r(left_row, i_d):
             geom = left_row[0]

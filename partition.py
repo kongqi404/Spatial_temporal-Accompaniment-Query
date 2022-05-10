@@ -5,7 +5,6 @@ import shapely.geometry
 from shapely.geometry import Polygon
 
 import all_utils
-from extractor import STExtractor
 
 
 class GlobalSpatialInfo:
