@@ -1,11 +1,9 @@
 import time
 
 import pyspark
-
 from shapely import wkt
-
-import all_utils
 from ST_knn import STKnnJoin
+
 
 if __name__ == "__main__":
     spark = pyspark.sql.SparkSession.builder.appName("st_knn").getOrCreate()
@@ -44,12 +42,17 @@ if __name__ == "__main__":
         second = []
         for i in line[1]:
             if len(i) > 0:
-                second.append((i[0][0][0].wkt,i[0][0][1],i[0][1]))
-        return None if len(second)==0 else ((line[0][0].wkt,line[0][1]),second)
-
+                second.append((i[0][0][0],i[0][0][1],i[0][1]))
+        return None if len(second)==0 else ((line[0][0],line[0][1]),second)
+    # def res_mapping(line):
+    #     second = []
+    #     for i in line[1]:
+    #         if len(i) > 0:
+    #             second.append(i[0][0][0].wkt)
+    #     return None if len(second)==0 else (line[0][0].wkt,second)
     res=join_rdd.map(res_mapping).filter(lambda x:x is not None)
     print(res.count())
     print(f"all time :{time.time()-current_time}")
-    res.repartition(1).saveAsTextFile(store_path)
+    res.repartition(1).saveAsPickleFile(store_path)
     spark.stop()
     # end spark

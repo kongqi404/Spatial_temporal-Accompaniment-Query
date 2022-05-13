@@ -1,8 +1,6 @@
 import unittest
 
-import pyspark
 import shapely.geometry
-
 from partition import GlobalSpatialInfo
 
 
