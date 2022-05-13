@@ -19,11 +19,10 @@ sample = Sample()
 @web_service.get("/")
 def read_root():
     seq=sample.sample(1)
-    res = [seq[0][0][0]]
+    res = [geojson.Feature(geometry=geojson.loads(geojson.dumps(seq[0][0][0])))]
     for i in seq[0][1]:
-        res.append(i[0])
-    multi = geometry.MultiPolygon(res)
-    return geojson.loads(geojson.dumps(multi))
+        res.append(geojson.Feature(geometry=geojson.loads(geojson.dumps(i[0]))))
+    return geojson.FeatureCollection(res)
 
 @web_service.get("items/{item_id}")
 def read_item(item_id:int):
